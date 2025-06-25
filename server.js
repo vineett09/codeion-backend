@@ -29,7 +29,15 @@ class Room {
     this.isPrivate = isPrivate;
     this.createdBy = createdBy;
     this.users = [];
-    this.code = this.getDefaultCode(language);
+    this.tabs = [
+      {
+        id: "main",
+        name: "Main",
+        code: this.getDefaultCode(language),
+        language: language,
+      },
+    ];
+    this.activeTab = "main";
     this.createdAt = new Date();
     this.lastActivity = new Date();
   }
@@ -62,9 +70,52 @@ class Room {
     this.lastActivity = new Date();
   }
 
-  updateCode(code, userId) {
-    this.code = code;
+  addTab(tab) {
+    this.tabs.push(tab);
     this.lastActivity = new Date();
+  }
+
+  // Fixed: Update specific tab's code
+  updateTabCode(tabId, code) {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) {
+      tab.code = code;
+      this.lastActivity = new Date();
+      return true;
+    }
+    return false;
+  }
+
+  // Fixed: Update specific tab's language
+  updateTabLanguage(tabId, language) {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) {
+      tab.language = language;
+      this.lastActivity = new Date();
+      return true;
+    }
+    return false;
+  }
+
+  // New: Get specific tab
+  getTab(tabId) {
+    return this.tabs.find((t) => t.id === tabId);
+  }
+
+  // New: Delete tab
+  deleteTab(tabId) {
+    if (this.tabs.length <= 1) return false; // Don't delete last tab
+    const index = this.tabs.findIndex((t) => t.id === tabId);
+    if (index !== -1) {
+      this.tabs.splice(index, 1);
+      // If active tab was deleted, switch to first tab
+      if (this.activeTab === tabId) {
+        this.activeTab = this.tabs[0].id;
+      }
+      this.lastActivity = new Date();
+      return true;
+    }
+    return false;
   }
 }
 
@@ -76,6 +127,7 @@ class User {
     this.socketId = socketId;
     this.cursor = { line: 0, ch: 0 };
     this.color = this.generateColor();
+    this.activeTab = "main"; // Track user's active tab
   }
 
   generateColor() {
@@ -181,7 +233,8 @@ io.on("connection", (socket) => {
         id: room.id,
         name: room.name,
         language: room.language,
-        code: room.code,
+        tabs: room.tabs,
+        activeTab: room.activeTab,
       },
       user: {
         id: user.id,
@@ -192,6 +245,7 @@ io.on("connection", (socket) => {
         id: u.id,
         name: u.name,
         color: u.color,
+        activeTab: u.activeTab,
       })),
     });
 
@@ -201,27 +255,31 @@ io.on("connection", (socket) => {
         id: user.id,
         name: user.name,
         color: user.color,
+        activeTab: user.activeTab,
       },
     });
 
     console.log(`${userName} joined room ${roomId}`);
   });
 
+  // Fixed: Handle code changes for specific tabs
   socket.on("code-change", (data) => {
     const user = users.get(socket.id);
     if (!user) return;
 
-    const { roomId, code, operation } = data;
+    const { roomId, code, tabId } = data;
     const room = rooms.get(roomId);
 
-    if (!room) return;
+    if (!room || !tabId) return;
 
-    room.updateCode(code);
+    // Update the specific tab's code
+    const success = room.updateTabCode(tabId, code);
+    if (!success) return;
 
-    // Broadcast to other users in the room
+    // Broadcast to other users in the room (only for the specific tab)
     socket.to(roomId).emit("code-update", {
       code,
-      operation,
+      tabId,
       userId: user.id,
       userName: user.name,
     });
@@ -231,15 +289,88 @@ io.on("connection", (socket) => {
     const user = users.get(socket.id);
     if (!user) return;
 
-    const { roomId, cursor } = data;
+    const { roomId, cursor, tabId } = data;
     user.cursor = cursor;
 
-    // Broadcast cursor position to other users
+    // Broadcast cursor position to other users (include tab info)
     socket.to(roomId).emit("cursor-update", {
       userId: user.id,
       userName: user.name,
       cursor,
       color: user.color,
+      tabId: tabId || user.activeTab,
+    });
+  });
+
+  socket.on("create-tab", (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const { roomId, tab } = data;
+    const room = rooms.get(roomId);
+
+    if (!room) return;
+
+    room.addTab(tab);
+
+    // Broadcast to all users in room
+    io.to(roomId).emit("tab-created", {
+      tab,
+      userId: user.id,
+      userName: user.name,
+    });
+  });
+
+  // Fixed: Handle tab switching per user
+  socket.on("switch-tab", (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const { roomId, tabId } = data;
+    const room = rooms.get(roomId);
+
+    if (!room) return;
+
+    // Update user's active tab
+    user.activeTab = tabId;
+
+    // Send the specific tab's content to the user
+    const tab = room.getTab(tabId);
+    if (tab) {
+      socket.emit("tab-content", {
+        tabId,
+        code: tab.code,
+        language: tab.language,
+      });
+    }
+
+    // Notify other users about this user's tab switch
+    socket.to(roomId).emit("user-tab-switched", {
+      userId: user.id,
+      userName: user.name,
+      tabId,
+    });
+  });
+
+  // Fixed: Handle language changes for specific tabs
+  socket.on("language-change", (data) => {
+    const user = users.get(socket.id);
+    if (!user) return;
+
+    const { roomId, language, tabId } = data;
+    const room = rooms.get(roomId);
+
+    if (!room || !tabId) return;
+
+    const success = room.updateTabLanguage(tabId, language);
+    if (!success) return;
+
+    // Broadcast to other users in room
+    socket.to(roomId).emit("language-changed", {
+      language,
+      tabId,
+      userId: user.id,
+      userName: user.name,
     });
   });
 
