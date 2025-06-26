@@ -102,6 +102,23 @@ const handleConnection = (io, socket) => {
     });
   });
 
+  // Handle tab deletion
+  socket.on("delete-tab", (data) => {
+    const user = roomService.getUserBySocketId(socket.id);
+    if (!user) return;
+
+    const { roomId, tabId } = data;
+    const result = roomService.deleteTabFromRoom(roomId, tabId);
+
+    if (result && result.success) {
+      // Broadcast to all users in the room
+      io.to(roomId).emit("tab-deleted", {
+        tabId,
+        newActiveTab: result.newActiveTab,
+      });
+    }
+  });
+
   // Handle tab switching per user
   socket.on("switch-tab", (data) => {
     const user = roomService.getUserBySocketId(socket.id);

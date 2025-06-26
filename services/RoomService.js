@@ -88,6 +88,12 @@ class RoomService {
     return true;
   }
 
+  deleteTabFromRoom(roomId, tabId) {
+    const room = this.rooms.get(roomId);
+    if (!room) return { success: false };
+    return room.deleteTab(tabId);
+  }
+
   getTabFromRoom(roomId, tabId) {
     const room = this.rooms.get(roomId);
     if (!room) return null;

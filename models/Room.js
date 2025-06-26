@@ -79,18 +79,26 @@ class Room {
   }
 
   deleteTab(tabId) {
-    if (this.tabs.length <= 1) return false; // Don't delete last tab
+    // Prevent deleting the main tab or if only one tab is left
+    if (tabId === "main" || this.tabs.length <= 1) {
+      return { success: false };
+    }
+
     const index = this.tabs.findIndex((t) => t.id === tabId);
     if (index !== -1) {
       this.tabs.splice(index, 1);
-      // If active tab was deleted, switch to first tab
+
+      let newActiveTab = this.activeTab;
+      // If the deleted tab was the active one, switch to the first available tab
       if (this.activeTab === tabId) {
-        this.activeTab = this.tabs[0].id;
+        newActiveTab = this.tabs[0].id;
+        this.activeTab = newActiveTab;
       }
+
       this.lastActivity = new Date();
-      return true;
+      return { success: true, newActiveTab: newActiveTab };
     }
-    return false;
+    return { success: false };
   }
 
   toJSON() {
