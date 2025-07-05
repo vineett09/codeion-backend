@@ -5,10 +5,10 @@ const roomService = require("../services/RoomService");
 const handleConnection = (io, socket) => {
   console.log("User connected:", socket.id);
 
-  // Handle joining a room
+  // Handle joining or reconnecting to a room
   socket.on("join-room", async (data) => {
     try {
-      const { roomId, userName } = data;
+      const { roomId, userName, sessionId } = data;
       const room = roomService.getRoom(roomId);
 
       if (!room) {
@@ -16,14 +16,38 @@ const handleConnection = (io, socket) => {
         return;
       }
 
-      // Create user
-      const user = new User(uuidv4(), userName, socket.id);
+      let user;
+      let isReconnecting = false;
 
-      // Add user to room
-      roomService.addUserToRoom(roomId, user);
+      // Try to reconnect if a sessionId was provided
+      if (sessionId) {
+        const reconnectedUser = roomService.reconnectUser(
+          roomId,
+          sessionId,
+          socket.id
+        );
+        if (reconnectedUser) {
+          user = reconnectedUser;
+          isReconnecting = true;
+          console.log(`${user.name} reconnected to room ${roomId}`);
+        }
+      }
+
+      // If not reconnecting, create a new user
+      if (!isReconnecting) {
+        const newSessionId = uuidv4();
+        const newUserId = uuidv4();
+        user = new User(newUserId, userName, socket.id, newSessionId);
+        roomService.addUserToRoom(roomId, user);
+        console.log(`${userName} joined room ${roomId} for the first time`);
+      }
+
       socket.join(roomId);
 
-      // Send initial data to user
+      // Get the current user list (this ensures consistency)
+      const currentUsers = roomService.getAllUsersInRoom(roomId);
+
+      // Send initial data to the user
       socket.emit("room-joined", {
         room: {
           id: room.id,
@@ -33,16 +57,23 @@ const handleConnection = (io, socket) => {
           activeTab: room.activeTab,
         },
         user: user.toJSON(),
-        users: room.users.map((u) => u.toJSON()),
+        sessionId: user.sessionId,
+        users: currentUsers.map((u) => u.toJSON()),
       });
 
-      // Notify other users
-      socket.to(roomId).emit("user-joined", {
+      // Broadcast updated user list to ALL users in the room (including the one who just joined)
+      const eventType = isReconnecting ? "user-reconnected" : "user-joined";
+      io.to(roomId).emit(eventType, {
         user: user.toJSON(),
+        users: currentUsers.map((u) => u.toJSON()), // Send the same authoritative list to everyone
       });
 
-      console.log(`${userName} joined room ${roomId}`);
+      // Also emit a separate event to sync all users' lists
+      io.to(roomId).emit("users-list-sync", {
+        users: currentUsers.map((u) => u.toJSON()),
+      });
     } catch (error) {
+      console.error("Error in join-room:", error);
       socket.emit("error", { message: error.message });
     }
   });
@@ -137,11 +168,13 @@ const handleConnection = (io, socket) => {
       });
     }
 
-    // Notify other users about this user's tab switch
+    // Notify other users about this user's tab switch and sync user list
+    const currentUsers = roomService.getAllUsersInRoom(roomId);
     socket.to(roomId).emit("user-tab-switched", {
       userId: user.id,
       userName: user.name,
       tabId,
+      users: currentUsers.map((u) => u.toJSON()), // Include updated user list
     });
   });
 
@@ -183,15 +216,62 @@ const handleConnection = (io, socket) => {
     });
   });
 
-  // Handle disconnect
+  // Handle explicit leaving from the room
+  socket.on("leave-room", (data) => {
+    const user = roomService.getUserBySocketId(socket.id);
+    if (!user) return;
+
+    const { roomId, userId } = data;
+    if (user.id !== userId) return; // Basic validation
+
+    roomService.removeUserPermanently(roomId, userId);
+
+    // Get updated user list and broadcast to everyone
+    const currentUsers = roomService.getAllUsersInRoom(roomId);
+    socket.to(roomId).emit("user-left", {
+      userId: user.id,
+      userName: user.name,
+      users: currentUsers.map((u) => u.toJSON()),
+    });
+
+    console.log(`User ${user.name} explicitly left room ${roomId}`);
+  });
+  socket.on("request-user-sync", (data) => {
+    const { roomId } = data;
+    const user = roomService.getUserBySocketId(socket.id);
+
+    if (!user) return;
+
+    const currentUsers = roomService.getAllUsersInRoom(roomId);
+    socket.emit("user-sync-response", {
+      users: currentUsers.map((u) => u.toJSON()),
+    });
+  });
+
+  // Also add a helper function to broadcast user list updates
+  const broadcastUserListUpdate = (
+    io,
+    roomId,
+    eventType,
+    additionalData = {}
+  ) => {
+    const currentUsers = roomService.getAllUsersInRoom(roomId);
+    const payload = {
+      users: currentUsers.map((u) => u.toJSON()),
+      ...additionalData,
+    };
+
+    io.to(roomId).emit(eventType, payload);
+  };
+  // Handle temporary disconnect (e.g., closing tab)
   socket.on("disconnect", () => {
-    const result = roomService.removeUserFromRoom(socket.id);
+    const result = roomService.handleUserDisconnect(socket.id);
 
     if (result) {
       const { user, roomId } = result;
 
-      // Notify other users
-      socket.to(roomId).emit("user-left", {
+      // Use the helper function
+      broadcastUserListUpdate(io, roomId, "user-disconnected", {
         userId: user.id,
         userName: user.name,
       });

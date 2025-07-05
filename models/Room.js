@@ -1,5 +1,3 @@
-const { v4: uuidv4 } = require("uuid");
-
 class Room {
   constructor(id, name, language, isPrivate, createdBy) {
     this.id = id;
@@ -30,11 +28,6 @@ class Room {
       python: '# Welcome to the collaborative editor!\nprint("Hello, World!")',
       java: '// Welcome to the collaborative editor!\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, World!");\n    }\n}',
       cpp: '// Welcome to the collaborative editor!\n#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello, World!" << endl;\n    return 0;\n}',
-      react:
-        '// Welcome to the collaborative editor!\nimport React from "react";\n\nfunction App() {\n  return (\n    <div>\n      <h1>Hello, World!</h1>\n    </div>\n  );\n}\n\nexport default App;',
-      nodejs:
-        '// Welcome to the collaborative editor!\nconst express = require("express");\nconst app = express();\n\napp.get("/", (req, res) => {\n  res.send("Hello, World!");\n});\n\napp.listen(3000, () => {\n  console.log("Server running on port 3000");\n});',
-      html: "<!-- Welcome to the collaborative editor! -->\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Hello World</title>\n</head>\n<body>\n    <h1>Hello, World!</h1>\n</body>\n</html>",
     };
     return templates[language] || "// Welcome to the collaborative editor!";
   }
