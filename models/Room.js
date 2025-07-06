@@ -12,6 +12,8 @@ class Room {
         name: "Main",
         code: this.getDefaultCode(language),
         language: language,
+        isPublic: true, // Main tab is always public
+        createdBy: "system", // Belongs to the system
       },
     ];
     this.activeTab = "main";
@@ -43,7 +45,13 @@ class Room {
   }
 
   addTab(tab) {
-    this.tabs.push(tab);
+    // Ensure new tabs are private by default and have a creator
+    const newTab = {
+      ...tab,
+      isPublic: false,
+      createdBy: tab.createdBy || "system",
+    };
+    this.tabs.push(newTab);
     this.lastActivity = new Date();
   }
 
@@ -71,27 +79,41 @@ class Room {
     return this.tabs.find((t) => t.id === tabId);
   }
 
-  deleteTab(tabId) {
-    // Prevent deleting the main tab or if only one tab is left
-    if (tabId === "main" || this.tabs.length <= 1) {
-      return { success: false };
+  deleteTab(tabId, userId) {
+    const tab = this.getTab(tabId);
+    // Prevent deleting main tab, system tabs, or if the user is not the owner
+    if (
+      !tab ||
+      tab.id === "main" ||
+      tab.createdBy === "system" ||
+      tab.createdBy !== userId
+    ) {
+      return { success: false, reason: "Not authorized or system tab" };
     }
 
     const index = this.tabs.findIndex((t) => t.id === tabId);
     if (index !== -1) {
       this.tabs.splice(index, 1);
-
       let newActiveTab = this.activeTab;
-      // If the deleted tab was the active one, switch to the first available tab
       if (this.activeTab === tabId) {
         newActiveTab = this.tabs[0].id;
         this.activeTab = newActiveTab;
       }
-
       this.lastActivity = new Date();
       return { success: true, newActiveTab: newActiveTab };
     }
-    return { success: false };
+    return { success: false, reason: "Tab not found" };
+  }
+
+  setTabPublic(tabId, isPublic, userId) {
+    const tab = this.getTab(tabId);
+    // Only allow owner to change privacy, prevent changing main tab privacy
+    if (tab && tab.createdBy === userId && tab.id !== "main") {
+      tab.isPublic = isPublic;
+      this.lastActivity = new Date();
+      return { success: true, tab };
+    }
+    return { success: false, reason: "Not authorized or main tab" };
   }
 
   toJSON() {

@@ -38,25 +38,12 @@ class RoomService {
     return room;
   }
 
-  /**
-   * Finds a disconnected user within a room by their session ID.
-   * @param {string} roomId - The ID of the room.
-   * @param {string} sessionId - The session ID of the user.
-   * @returns {User|null}
-   */
   findUserBySessionId(roomId, sessionId) {
     const room = this.getRoom(roomId);
     if (!room) return null;
     return room.users.find((u) => u.sessionId === sessionId && u.disconnected);
   }
 
-  /**
-   * Reconnects a user who was previously disconnected.
-   * @param {string} roomId - The ID of the room.
-   * @param {string} sessionId - The session ID of the user.
-   * @param {string} newSocketId - The new socket ID of the reconnected user.
-   * @returns {User|null}
-   */
   reconnectUser(roomId, sessionId, newSocketId) {
     const room = this.getRoom(roomId);
     if (!room) return null;
@@ -65,29 +52,20 @@ class RoomService {
       (u) => u.sessionId === sessionId && u.disconnected
     );
     if (user) {
-      // Remove old socket mapping if it exists
       for (const [socketId, userInfo] of this.users.entries()) {
         if (userInfo.user.id === user.id) {
           this.users.delete(socketId);
           break;
         }
       }
-
-      // Reconnect the user
       user.reconnect(newSocketId);
       this.users.set(newSocketId, { user, roomId });
-
       console.log(`User ${user.name} reconnected to room ${roomId}`);
       return user;
     }
     return null;
   }
 
-  /**
-   * Handles a user's disconnection by marking them as disconnected.
-   * @param {string} socketId - The socket ID of the disconnected user.
-   * @returns {{user: User, roomId: string, room: Room}|null}
-   */
   handleUserDisconnect(socketId) {
     const userInfo = this.users.get(socketId);
     if (!userInfo) return null;
@@ -98,17 +76,12 @@ class RoomService {
     if (room && user) {
       user.markAsDisconnected();
       console.log(`User ${user.name} marked as disconnected in room ${roomId}`);
-      this.users.delete(socketId); // Remove old socket mapping
+      this.users.delete(socketId);
       return { user, roomId, room };
     }
     return null;
   }
 
-  /**
-   * Permanently removes a user from a room, e.g., when they explicitly leave.
-   * @param {string} roomId - The ID of the room.
-   * @param {string} userId - The ID of the user to remove.
-   */
   removeUserPermanently(roomId, userId) {
     const room = this.getRoom(roomId);
     if (!room) return;
@@ -116,7 +89,6 @@ class RoomService {
     const userToRemove = room.users.find((u) => u.id === userId);
     if (!userToRemove) return;
 
-    // Find and delete from the main user map if they are still connected
     for (const [socketId, userInfo] of this.users.entries()) {
       if (userInfo.user.id === userId) {
         this.users.delete(socketId);
@@ -135,22 +107,12 @@ class RoomService {
     }
   }
 
-  /**
-   * Get all active (non-disconnected) users in a room
-   * @param {string} roomId - The ID of the room
-   * @returns {Array} Array of active users
-   */
   getActiveUsersInRoom(roomId) {
     const room = this.getRoom(roomId);
     if (!room) return [];
     return room.users.filter((user) => !user.disconnected);
   }
 
-  /**
-   * Get all users in a room (including disconnected ones)
-   * @param {string} roomId - The ID of the room
-   * @returns {Array} Array of all users
-   */
   getAllUsersInRoom(roomId) {
     const room = this.getRoom(roomId);
     if (!room) return [];
@@ -181,21 +143,24 @@ class RoomService {
     return true;
   }
 
-  deleteTabFromRoom(roomId, tabId) {
-    const room = this.rooms.get(roomId);
+  deleteTabFromRoom(roomId, tabId, userId) {
+    const room = this.getRoom(roomId);
     if (!room) return { success: false };
-    return room.deleteTab(tabId);
+    return room.deleteTab(tabId, userId);
+  }
+
+  setTabPublicInRoom(roomId, tabId, isPublic, userId) {
+    const room = this.getRoom(roomId);
+    if (!room) return { success: false };
+    return room.setTabPublic(tabId, isPublic, userId);
   }
 
   getTabFromRoom(roomId, tabId) {
-    const room = this.rooms.get(roomId);
+    const room = this.getRoom(roomId);
     if (!room) return null;
     return room.getTab(tabId);
   }
 
-  /**
-   * Periodically cleans up disconnected users and inactive rooms.
-   */
   startCleanupTask() {
     setInterval(() => {
       const now = new Date();
@@ -203,7 +168,6 @@ class RoomService {
       const maxInactiveRoomTime = 24 * 60 * 60 * 1000; // 24 hours
 
       for (const [roomId, room] of this.rooms.entries()) {
-        // Iterate backwards to safely remove users from the array while iterating
         for (let i = room.users.length - 1; i >= 0; i--) {
           const user = room.users[i];
           if (
@@ -217,7 +181,6 @@ class RoomService {
           }
         }
 
-        // If the room is now empty, check if it's been inactive for a long time
         if (
           room.users.length === 0 &&
           now - room.lastActivity > maxInactiveRoomTime

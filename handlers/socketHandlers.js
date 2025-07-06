@@ -5,7 +5,6 @@ const roomService = require("../services/RoomService");
 const handleConnection = (io, socket) => {
   console.log("User connected:", socket.id);
 
-  // Handle joining or reconnecting to a room
   socket.on("join-room", async (data) => {
     try {
       const { roomId, userName, sessionId } = data;
@@ -19,7 +18,6 @@ const handleConnection = (io, socket) => {
       let user;
       let isReconnecting = false;
 
-      // Try to reconnect if a sessionId was provided
       if (sessionId) {
         const reconnectedUser = roomService.reconnectUser(
           roomId,
@@ -33,7 +31,6 @@ const handleConnection = (io, socket) => {
         }
       }
 
-      // If not reconnecting, create a new user
       if (!isReconnecting) {
         const newSessionId = uuidv4();
         const newUserId = uuidv4();
@@ -44,16 +41,18 @@ const handleConnection = (io, socket) => {
 
       socket.join(roomId);
 
-      // Get the current user list (this ensures consistency)
       const currentUsers = roomService.getAllUsersInRoom(roomId);
 
-      // Send initial data to the user
+      // Filter tabs to show only public ones and the user's own private ones
+      const visibleTabs = room.tabs.filter(
+        (t) => t.isPublic || t.createdBy === user.id || t.createdBy === "system"
+      );
       socket.emit("room-joined", {
         room: {
           id: room.id,
           name: room.name,
           language: room.language,
-          tabs: room.tabs,
+          tabs: visibleTabs,
           activeTab: room.activeTab,
         },
         user: user.toJSON(),
@@ -61,14 +60,12 @@ const handleConnection = (io, socket) => {
         users: currentUsers.map((u) => u.toJSON()),
       });
 
-      // Broadcast updated user list to ALL users in the room (including the one who just joined)
       const eventType = isReconnecting ? "user-reconnected" : "user-joined";
       io.to(roomId).emit(eventType, {
         user: user.toJSON(),
-        users: currentUsers.map((u) => u.toJSON()), // Send the same authoritative list to everyone
+        users: currentUsers.map((u) => u.toJSON()),
       });
 
-      // Also emit a separate event to sync all users' lists
       io.to(roomId).emit("users-list-sync", {
         users: currentUsers.map((u) => u.toJSON()),
       });
@@ -78,17 +75,12 @@ const handleConnection = (io, socket) => {
     }
   });
 
-  // Handle code changes for specific tabs
   socket.on("code-change", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
-
     const { roomId, code, tabId } = data;
     const success = roomService.updateTabCode(roomId, tabId, code);
-
     if (!success) return;
-
-    // Broadcast to other users in the room
     socket.to(roomId).emit("code-update", {
       code,
       tabId,
@@ -97,52 +89,29 @@ const handleConnection = (io, socket) => {
     });
   });
 
-  // Handle cursor changes
-  socket.on("cursor-change", (data) => {
-    const user = roomService.getUserBySocketId(socket.id);
-    if (!user) return;
-
-    const { roomId, cursor, tabId } = data;
-    user.updateCursor(cursor);
-
-    // Broadcast cursor position to other users
-    socket.to(roomId).emit("cursor-update", {
-      userId: user.id,
-      userName: user.name,
-      cursor,
-      color: user.color,
-      tabId: tabId || user.activeTab,
-    });
-  });
-
-  // Handle tab creation
   socket.on("create-tab", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
-
     const { roomId, tab } = data;
-    const success = roomService.addTabToRoom(roomId, tab);
-
+    // Assign the creator to the tab and set as private by default
+    const newTab = { ...tab, createdBy: user.id, isPublic: false };
+    const success = roomService.addTabToRoom(roomId, newTab);
     if (!success) return;
-
-    // Broadcast to all users in room
-    io.to(roomId).emit("tab-created", {
-      tab,
+    // Only the creator gets the tab immediately (since it's private)
+    socket.emit("tab-created", {
+      tab: newTab,
       userId: user.id,
       userName: user.name,
     });
   });
 
-  // Handle tab deletion
   socket.on("delete-tab", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
-
     const { roomId, tabId } = data;
-    const result = roomService.deleteTabFromRoom(roomId, tabId);
-
+    // Pass userId to check for ownership
+    const result = roomService.deleteTabFromRoom(roomId, tabId, user.id);
     if (result && result.success) {
-      // Broadcast to all users in the room
       io.to(roomId).emit("tab-deleted", {
         tabId,
         newActiveTab: result.newActiveTab,
@@ -150,15 +119,50 @@ const handleConnection = (io, socket) => {
     }
   });
 
-  // Handle tab switching per user
-  socket.on("switch-tab", (data) => {
+  socket.on("share-tab", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
 
+    const { roomId, tabId, isPublic } = data;
+    const result = roomService.setTabPublicInRoom(
+      roomId,
+      tabId,
+      isPublic,
+      user.id
+    );
+
+    if (result && result.success) {
+      // Broadcast to all users in the room
+      io.to(roomId).emit("tab-privacy-changed", {
+        tab: result.tab,
+        userId: user.id,
+        userName: user.name,
+      });
+
+      // If the tab is made private, notify non-owners to remove it
+      // In socketHandlers.js, in the "share-tab" handler, replace this part:
+      if (!isPublic) {
+        const room = roomService.getRoom(roomId);
+        if (room) {
+          // Send tab-removed to each non-owner user individually
+          room.users.forEach((roomUser) => {
+            if (
+              roomUser.id !== result.tab.createdBy &&
+              !roomUser.disconnected
+            ) {
+              io.to(roomUser.socketId).emit("tab-removed", { tabId });
+            }
+          });
+        }
+      }
+    }
+  });
+
+  socket.on("switch-tab", (data) => {
+    const user = roomService.getUserBySocketId(socket.id);
+    if (!user) return;
     const { roomId, tabId } = data;
     user.switchTab(tabId);
-
-    // Send the specific tab's content to the user
     const tab = roomService.getTabFromRoom(roomId, tabId);
     if (tab) {
       socket.emit("tab-content", {
@@ -167,28 +171,21 @@ const handleConnection = (io, socket) => {
         language: tab.language,
       });
     }
-
-    // Notify other users about this user's tab switch and sync user list
     const currentUsers = roomService.getAllUsersInRoom(roomId);
     socket.to(roomId).emit("user-tab-switched", {
       userId: user.id,
       userName: user.name,
       tabId,
-      users: currentUsers.map((u) => u.toJSON()), // Include updated user list
+      users: currentUsers.map((u) => u.toJSON()),
     });
   });
 
-  // Handle language changes for specific tabs
   socket.on("language-change", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
-
     const { roomId, language, tabId } = data;
     const success = roomService.updateTabLanguage(roomId, tabId, language);
-
     if (!success) return;
-
-    // Broadcast to other users in room
     socket.to(roomId).emit("language-changed", {
       language,
       tabId,
@@ -197,15 +194,11 @@ const handleConnection = (io, socket) => {
     });
   });
 
-  // Handle chat messages
   socket.on("chat-message", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
-
     const { roomId, message } = data;
     const timestamp = new Date();
-
-    // Broadcast message to all users in room
     io.to(roomId).emit("chat-message", {
       id: uuidv4(),
       userId: user.id,
@@ -216,69 +209,33 @@ const handleConnection = (io, socket) => {
     });
   });
 
-  // Handle explicit leaving from the room
   socket.on("leave-room", (data) => {
     const user = roomService.getUserBySocketId(socket.id);
     if (!user) return;
-
     const { roomId, userId } = data;
-    if (user.id !== userId) return; // Basic validation
-
+    if (user.id !== userId) return;
     roomService.removeUserPermanently(roomId, userId);
-
-    // Get updated user list and broadcast to everyone
     const currentUsers = roomService.getAllUsersInRoom(roomId);
     socket.to(roomId).emit("user-left", {
       userId: user.id,
       userName: user.name,
       users: currentUsers.map((u) => u.toJSON()),
     });
-
     console.log(`User ${user.name} explicitly left room ${roomId}`);
   });
-  socket.on("request-user-sync", (data) => {
-    const { roomId } = data;
-    const user = roomService.getUserBySocketId(socket.id);
 
-    if (!user) return;
-
-    const currentUsers = roomService.getAllUsersInRoom(roomId);
-    socket.emit("user-sync-response", {
-      users: currentUsers.map((u) => u.toJSON()),
-    });
-  });
-
-  // Also add a helper function to broadcast user list updates
-  const broadcastUserListUpdate = (
-    io,
-    roomId,
-    eventType,
-    additionalData = {}
-  ) => {
-    const currentUsers = roomService.getAllUsersInRoom(roomId);
-    const payload = {
-      users: currentUsers.map((u) => u.toJSON()),
-      ...additionalData,
-    };
-
-    io.to(roomId).emit(eventType, payload);
-  };
-  // Handle temporary disconnect (e.g., closing tab)
   socket.on("disconnect", () => {
     const result = roomService.handleUserDisconnect(socket.id);
-
     if (result) {
       const { user, roomId } = result;
-
-      // Use the helper function
-      broadcastUserListUpdate(io, roomId, "user-disconnected", {
+      const currentUsers = roomService.getAllUsersInRoom(roomId);
+      io.to(roomId).emit("user-disconnected", {
         userId: user.id,
         userName: user.name,
+        users: currentUsers.map((u) => u.toJSON()),
       });
-
       console.log(`User ${user.name} disconnected from room ${roomId}`);
     }
-
     console.log("User disconnected:", socket.id);
   });
 };
