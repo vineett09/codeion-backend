@@ -305,7 +305,10 @@ class DSAChallengeRoomService {
   endChallenge(roomId) {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
-    room.endChallenge();
+
+    // Use resetChallenge to properly clear the challenge
+    room.resetChallenge();
+
     return room;
   }
 

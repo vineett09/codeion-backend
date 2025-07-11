@@ -138,7 +138,6 @@ class DSAChallengeRoom {
     this.status = "waiting";
     this.startTime = null;
     this.endTime = null;
-    // Don't reset submissions history or leaderboard for session continuity
     this.lastActivity = new Date();
   }
 
