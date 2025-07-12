@@ -159,73 +159,100 @@ const handleDSAConnection = (io, socket) => {
   });
 
   // Submit solution
+  // Update the submit-solution handler
   socket.on("submit-solution", async (data) => {
     try {
       const user = dsaRoomService.getUserBySocketId(socket.id);
-      if (!user) return;
+      if (!user) {
+        throw new Error("User session not found");
+      }
 
       const { roomId, solution } = data;
-      const result = dsaRoomService.submitSolution(roomId, user.id, solution);
-
-      if (result.success) {
-        // Update user stats
-        user.updateStats(result.submission);
-
-        // Notify user of submission
-        socket.emit("solution-submitted", {
-          submission: result.submission,
-          message: "Solution submitted successfully",
-        });
-
-        // Broadcast to room that user submitted
-        socket.to(roomId).emit("user-submitted", {
-          userId: user.id,
-          userName: user.name,
-          submissionId: result.submission.id,
-          submittedAt: result.submission.submittedAt,
-        });
-
-        // Start evaluation
-        setTimeout(async () => {
-          try {
-            const evaluationResult = await dsaRoomService.evaluateSubmission(
-              roomId,
-              result.submission.id
-            );
-
-            if (evaluationResult.success) {
-              // Send result to the user
-              socket.emit("evaluation-result", {
-                submission: evaluationResult.submission,
-                testResults: evaluationResult.submission.testResults,
-              });
-
-              // Broadcast updated leaderboard
-              const leaderboard = dsaRoomService.getLeaderboard(roomId);
-              io.to(roomId).emit("leaderboard-updated", {
-                leaderboard,
-                lastSubmission: {
-                  userId: user.id,
-                  userName: user.name,
-                  status: evaluationResult.submission.status,
-                  score: evaluationResult.submission.score,
-                },
-              });
-            }
-          } catch (evalError) {
-            console.error("Error in evaluation:", evalError);
-            socket.emit("error", { message: "Evaluation failed" });
-          }
-        }, 2000); // 2 second delay to simulate evaluation time
-      } else {
-        socket.emit("error", { message: result.message });
+      if (!roomId || !solution || !solution.language || !solution.code) {
+        throw new Error("Invalid submission data");
       }
+
+      const result = await dsaRoomService.submitSolution(
+        roomId,
+        user.id,
+        solution
+      );
+
+      if (!result.success) {
+        throw new Error(result.message || "Submission failed");
+      }
+
+      // Notify user of submission
+      socket.emit("solution-submitted", {
+        submission: result.submission,
+        message: "Solution submitted successfully",
+      });
+
+      // Broadcast to room
+      socket.to(roomId).emit("user-submitted", {
+        userId: user.id,
+        userName: user.name,
+        submissionId: result.submission.id,
+        submittedAt: result.submission.submittedAt,
+      });
+
+      // Start evaluation
+      setTimeout(async () => {
+        try {
+          const evaluationResult = await dsaRoomService.evaluateSubmission(
+            roomId,
+            result.submission.id
+          );
+
+          if (!evaluationResult.success) {
+            throw new Error(evaluationResult.message || "Evaluation failed");
+          }
+
+          // Send result to user
+          socket.emit("evaluation-result", {
+            submission: evaluationResult.submission,
+            testResults: evaluationResult.submission.testResults,
+          });
+
+          // Broadcast updated leaderboard
+          const leaderboard = dsaRoomService.getLeaderboard(roomId);
+          io.to(roomId).emit("leaderboard-updated", {
+            leaderboard,
+            lastSubmission: {
+              userId: user.id,
+              userName: user.name,
+              status: evaluationResult.submission.status,
+              score: evaluationResult.submission.score,
+            },
+          });
+        } catch (evalError) {
+          console.error("Evaluation error:", evalError);
+          socket.emit("error", {
+            message: evalError.message || "Evaluation failed",
+            code: "EVALUATION_ERROR",
+            submissionId: result.submission.id,
+          });
+        }
+      }, 2000);
     } catch (error) {
-      console.error("Error in submit-solution:", error);
-      socket.emit("error", { message: error.message });
+      console.error("Submit solution error:", {
+        error: error.message,
+        stack: error.stack,
+        socketId: socket.id,
+        data,
+      });
+
+      socket.emit("error", {
+        message: error.message || "Failed to submit solution",
+        code: "SUBMISSION_ERROR",
+        details: {
+          roomId: data?.roomId,
+          hasCode: !!data?.solution?.code,
+          hasLanguage: !!data?.solution?.language,
+        },
+      });
     }
   });
-
   // End challenge
   socket.on("end-challenge", (data) => {
     try {

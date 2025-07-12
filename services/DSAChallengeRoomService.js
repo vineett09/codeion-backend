@@ -183,121 +183,278 @@ class DSAChallengeRoomService {
     }
   }
 
-  submitSolution(roomId, userId, solution) {
+  async submitSolution(roomId, userId, solution) {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
+
     const result = room.submitSolution(userId, solution);
     if (result.success) {
       const user = room.users.find((u) => u.id === userId);
       if (user) {
         user.setCurrentSubmission(result.submission);
       }
+
+      // Automatically evaluate the submission
+      try {
+        await this.evaluateSubmission(roomId, result.submission.id);
+      } catch (error) {
+        console.error("Error evaluating submission:", error);
+      }
     }
     return result;
   }
 
   async evaluateSubmission(roomId, submissionId) {
-    const room = this.getRoom(roomId);
-    if (!room || !room.currentChallenge)
-      throw new Error("Room or challenge not found");
+    try {
+      const room = this.getRoom(roomId);
+      if (!room || !room.currentChallenge)
+        throw new Error("Room or challenge not found");
 
-    let submission;
-    let userId;
+      let submission;
+      let userId;
 
-    // Find the submission and its owner
-    for (const [uid, submissions] of room.userSubmissions.entries()) {
-      const s = submissions.find((sub) => sub.id === submissionId);
-      if (s) {
-        submission = s;
-        userId = uid;
-        break;
+      // Find the submission and its owner
+      for (const [uid, submissions] of room.userSubmissions.entries()) {
+        const s = submissions.find((sub) => sub.id === submissionId);
+        if (s) {
+          submission = s;
+          userId = uid;
+          break;
+        }
       }
+
+      if (!submission) throw new Error("Submission not found");
+
+      const result = await this.evaluateWithJudge0(
+        submission,
+        room.currentChallenge.testCases
+      );
+      return room.updateSubmissionResult(submissionId, result);
+    } catch (error) {
+      console.error("Evaluation error:", error);
+      return {
+        success: false,
+        message: error.message,
+        status: "error",
+        testResults: [],
+        score: 0,
+      };
     }
-
-    if (!submission) throw new Error("Submission not found");
-
-    const result = await this.evaluateWithJudge0(
-      submission,
-      room.currentChallenge.testCases
-    );
-    return room.updateSubmissionResult(submissionId, result);
   }
 
   async evaluateWithJudge0(submission, testCases) {
-    const languageId = languageToJudgeId[submission.language];
-    if (!languageId) {
-      return {
-        status: "rejected",
-        testResults: [],
-        score: 0,
-        message: "Unsupported language",
-      };
-    }
-
-    const submissions = testCases.map((testCase) => {
-      // For Judge0, stdin needs to be a simple string. We'll have to adapt how we pass complex inputs.
-      // For now, we'll stringify the input object. The user's code will need to parse it.
-      // This is a limitation to consider. A better way is to format the code template to accept stdin.
-      const stdin = JSON.stringify(testCase.input);
-
-      return {
-        language_id: languageId,
-        source_code: Buffer.from(submission.code).toString("base64"),
-        stdin: Buffer.from(stdin).toString("base64"),
-        expected_output: Buffer.from(JSON.stringify(testCase.output)).toString(
-          "base64"
-        ),
-      };
-    });
-
     try {
-      const options = {
-        method: "POST",
-        url: `${config.judge0.baseURL}/submissions`,
-        params: { base64_encoded: "true", wait: "true" },
-        headers: {
-          "Content-Type": "application/json",
-          "X-RapidAPI-Key": config.judge0.apiKey,
-          "X-RapidAPI-Host": config.judge0.apiHost,
-        },
-        data: { submissions },
-      };
+      if (!submission || !testCases) {
+        throw new Error("Invalid evaluation data");
+      }
 
-      const response = await axios.request(options);
-      const results = response.data;
-
-      let passedTests = 0;
-      const testResults = results.map((res, index) => {
-        const passed = res.status.id === 3; // 3 = Accepted
-        if (passed) passedTests++;
+      const languageId = languageToJudgeId[submission.language];
+      if (!languageId) {
         return {
-          testCase: index + 1,
-          passed,
-          input: testCases[index].input,
-          expected: testCases[index].output,
-          actual: res.stdout
-            ? Buffer.from(res.stdout, "base64").toString("utf-8")
-            : "No output",
-          status: res.status.description,
+          success: false,
+          status: "rejected",
+          testResults: [],
+          score: 0,
+          message: `Unsupported language: ${submission.language}`,
         };
+      }
+
+      console.log("Starting Judge0 evaluation for submission:", {
+        submissionId: submission.id,
+        language: submission.language,
+        testCases: testCases.length,
       });
 
+      const results = [];
+      const judge0BaseURL = config.judge0.baseURL;
+      const judge0ApiKey = config.judge0.apiKey;
+
+      if (!judge0BaseURL || !judge0ApiKey) {
+        throw new Error("Judge0 configuration is missing");
+      }
+
+      for (let i = 0; i < testCases.length; i++) {
+        const testCase = testCases[i];
+        const wrappedCode = this.createWrappedCode(
+          submission.code,
+          submission.language,
+          testCase
+        );
+
+        const submissionData = {
+          language_id: languageId,
+          source_code: Buffer.from(wrappedCode).toString("base64"),
+          stdin: "",
+          expected_output: Buffer.from(
+            JSON.stringify(testCase.output)
+          ).toString("base64"),
+        };
+
+        const options = {
+          method: "POST",
+          url: `${judge0BaseURL}/submissions`,
+          params: { base64_encoded: "true", wait: "true" },
+          headers: {
+            "Content-Type": "application/json",
+            "X-RapidAPI-Key": judge0ApiKey,
+            "X-RapidAPI-Host": config.judge0.apiHost,
+          },
+          data: submissionData,
+        };
+
+        const response = await axios.request(options);
+        const result = response.data;
+
+        if (!result.status) {
+          throw new Error("Invalid response from Judge0");
+        }
+
+        results.push({
+          testCase: i + 1,
+          passed: result.status.id === 3,
+          input: testCase.input,
+          expected: testCase.output,
+          actual: result.stdout
+            ? Buffer.from(result.stdout, "base64").toString("utf-8").trim()
+            : "No output",
+          status: result.status.description,
+          error: result.stderr
+            ? Buffer.from(result.stderr, "base64").toString("utf-8")
+            : null,
+          compilationError: result.compile_output
+            ? Buffer.from(result.compile_output, "base64").toString("utf-8")
+            : null,
+        });
+      }
+
+      const passedTests = results.filter((r) => r.passed).length;
       const allPassed = passedTests === testCases.length;
       const score = allPassed
         ? 100
-        : Math.round((passedTests / testCases.length) * 100 * 0.5); // Partial score
+        : Math.round((passedTests / testCases.length) * 50);
 
       return {
+        success: true,
         status: allPassed ? "accepted" : "rejected",
-        testResults,
+        testResults: results,
         score,
+        passedTests,
+        totalTests: testCases.length,
       };
     } catch (error) {
-      console.error(
-        "Error calling Judge0 API:",
-        error.response ? error.response.data : error.message
-      );
-      throw new Error("Code evaluation failed.");
+      console.error("Judge0 evaluation failed:", {
+        error: error.message,
+        stack: error.stack,
+        submissionId: submission?.id,
+        testCases: testCases?.length,
+      });
+
+      return {
+        success: false,
+        status: "error",
+        testResults: [],
+        score: 0,
+        message: error.message || "Code evaluation failed",
+        errorDetails: {
+          isAxiosError: error.isAxiosError,
+          responseStatus: error.response?.status,
+          responseData: error.response?.data,
+        },
+      };
+    }
+  }
+
+  // Helper method to create wrapped code for different languages
+  createWrappedCode(userCode, language, testCase) {
+    const inputJson = JSON.stringify(testCase.input);
+
+    switch (language) {
+      case "javascript":
+        return `
+${userCode}
+
+// Test execution
+const input = ${inputJson};
+const result = solution(${Object.values(testCase.input)
+          .map((val) => JSON.stringify(val))
+          .join(", ")});
+console.log(JSON.stringify(result));
+`;
+
+      case "python":
+        return `
+import json
+
+${userCode}
+
+# Test execution
+input_data = ${inputJson}
+result = solution(${Object.values(testCase.input)
+          .map((val) => JSON.stringify(val))
+          .join(", ")})
+print(json.dumps(result))
+`;
+
+      case "cpp":
+        return `
+#include <iostream>
+#include <string>
+#include <vector>
+#include <nlohmann/json.hpp>
+using namespace std;
+using json = nlohmann::json;
+
+${userCode}
+
+int main() {
+    json input = R"(${inputJson})"_json;
+    auto result = solution(${Object.values(testCase.input)
+      .map((val) => JSON.stringify(val))
+      .join(", ")});
+    cout << result << endl;
+    return 0;
+}
+`;
+
+      case "java":
+        return `
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+${userCode}
+
+public class Main {
+    public static void main(String[] args) {
+        Solution sol = new Solution();
+        Object result = sol.solution(${Object.values(testCase.input)
+          .map((val) => JSON.stringify(val))
+          .join(", ")});
+        System.out.println(result);
+    }
+}
+`;
+
+      case "go":
+        return `
+package main
+
+import (
+    "encoding/json"
+    "fmt"
+)
+
+${userCode}
+
+func main() {
+    result := solution(${Object.values(testCase.input)
+      .map((val) => JSON.stringify(val))
+      .join(", ")})
+    output, _ := json.Marshal(result)
+    fmt.Println(string(output))
+}
+`;
+
+      default:
+        return userCode;
     }
   }
 
