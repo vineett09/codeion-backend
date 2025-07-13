@@ -1,7 +1,8 @@
 class DSAUser {
-  constructor(id, name, socketId, sessionId) {
+  constructor(id, name, socketId, sessionId, email) {
     this.id = id;
     this.name = name;
+    this.email = email; // Store the email
     this.socketId = socketId;
     this.sessionId = sessionId;
     this.color = this.generateColor();
@@ -86,6 +87,7 @@ class DSAUser {
     return {
       id: this.id,
       name: this.name,
+      email: this.email,
       color: this.color,
       currentLanguage: this.currentLanguage,
       disconnected: this.disconnected,

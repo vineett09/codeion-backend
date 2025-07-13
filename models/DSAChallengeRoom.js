@@ -5,17 +5,17 @@ class DSAChallengeRoom {
   constructor(id, name, difficulty, isPrivate, createdBy) {
     this.id = id;
     this.name = name;
-    this.difficulty = difficulty; // 'easy', 'medium', 'hard'
+    this.difficulty = difficulty;
     this.isPrivate = isPrivate;
     this.createdBy = createdBy;
     this.users = [];
-    this.topic = "any"; // Default topic
+    this.topic = "any";
     this.currentChallenge = null;
     this.challengeHistory = [];
-    this.userSubmissions = new Map(); // Map of userId -> submissions array
-    this.leaderboard = new Map(); // Map of userId -> score
-    this.status = "waiting"; // 'waiting', 'active', 'completed'
-    this.timeLimit = 30 * 60 * 1000; // 30 minutes default
+    this.userSubmissions = new Map();
+    this.leaderboard = new Map();
+    this.status = "waiting";
+    this.timeLimit = 30 * 60 * 1000;
     this.startTime = null;
     this.endTime = null;
     this.createdAt = new Date();
@@ -70,7 +70,7 @@ class DSAChallengeRoom {
       language: solution.language,
       code: solution.code,
       submittedAt: new Date(),
-      status: "pending", // 'pending', 'accepted', 'rejected'
+      status: "pending",
       testResults: null,
       score: 0,
     };
@@ -91,7 +91,6 @@ class DSAChallengeRoom {
         submission.testResults = result.testResults;
         submission.score = result.score;
 
-        // Update leaderboard
         if (result.status === "accepted") {
           const currentScore = this.leaderboard.get(userId) || 0;
           this.leaderboard.set(userId, currentScore + result.score);
@@ -150,6 +149,14 @@ class DSAChallengeRoom {
     if (!this.endTime || this.status !== "active") return 0;
     const remaining = this.endTime.getTime() - Date.now();
     return Math.max(0, remaining);
+  }
+
+  getRoomDataForUser(userId) {
+    return {
+      room: this.toJSON(),
+      submissions: this.getUserSubmissions(userId),
+      leaderboard: this.getLeaderboard(),
+    };
   }
 
   toJSON() {

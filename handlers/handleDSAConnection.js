@@ -1,7 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const DSAUser = require("../models/DSAUser");
 const dsaRoomService = require("../services/DSAChallengeRoomService");
-const config = require("../config/config");
+const axios = require("axios"); // Make sure axios is required
 
 const handleDSAConnection = (io, socket) => {
   console.log("DSA User connected:", socket.id);
@@ -9,9 +9,12 @@ const handleDSAConnection = (io, socket) => {
   // Join DSA challenge room
   socket.on("join-dsa-room", async (data) => {
     try {
-      const { roomId, userName, sessionId } = data;
+      const { roomId, userName, sessionId, userEmail } = data;
       const room = dsaRoomService.getRoom(roomId);
-
+      if (!userEmail) {
+        socket.emit("error", { message: "User email is required to join." });
+        return;
+      }
       if (!room) {
         socket.emit("error", { message: "Room not found" });
         return;
@@ -42,7 +45,13 @@ const handleDSAConnection = (io, socket) => {
         }
         const newSessionId = uuidv4();
         const newUserId = uuidv4();
-        user = new DSAUser(newUserId, userName, socket.id, newSessionId);
+        user = new DSAUser(
+          newUserId,
+          userName,
+          socket.id,
+          newSessionId,
+          userEmail
+        );
         dsaRoomService.addUserToRoom(roomId, user);
         console.log(`${userName} joined DSA room ${roomId} for the first time`);
       }
@@ -50,11 +59,13 @@ const handleDSAConnection = (io, socket) => {
       socket.join(roomId);
 
       const currentUsers = dsaRoomService.getAllUsersInRoom(roomId);
-      const roomData = room.toJSON();
+
+      // 🟢 Use new helper from your room class
+      const roomDataForUser = room.getRoomDataForUser(user.id);
 
       // Send room data to the joined user
       socket.emit("dsa-room-joined", {
-        room: roomData,
+        ...roomDataForUser,
         user: user.toJSON(),
         sessionId: user.sessionId,
         users: currentUsers.map((u) => u.toJSON()),
@@ -78,6 +89,7 @@ const handleDSAConnection = (io, socket) => {
       socket.emit("error", { message: error.message });
     }
   });
+
   socket.on("set-room-topic", (data) => {
     try {
       const user = dsaRoomService.getUserBySocketId(socket.id);
@@ -254,7 +266,8 @@ const handleDSAConnection = (io, socket) => {
     }
   });
   // End challenge
-  socket.on("end-challenge", (data) => {
+  socket.on("end-challenge", async (data) => {
+    // Make the handler async
     try {
       const user = dsaRoomService.getUserBySocketId(socket.id);
       if (!user) return;
@@ -285,13 +298,59 @@ const handleDSAConnection = (io, socket) => {
         endedBy: user.name,
       });
 
-      console.log(`Challenge ended in room ${roomId} by ${user.name}`);
+      console.log(`Challenge ended in room ${roomId}. Updating user stats...`);
+
+      // --- NEW: LOGIC TO UPDATE PERSISTENT STATS ---
+      try {
+        // The winner is the first person on the final leaderboard
+        const winner = finalLeaderboard.length > 0 ? finalLeaderboard[0] : null;
+
+        for (const player of room.users) {
+          if (!player.email) continue; // Skip if user has no email
+
+          const solvedProblems = room
+            .getUserSubmissions(player.id)
+            .filter((sub) => sub.status === "accepted")
+            .map((sub) => sub.challengeId);
+
+          const payload = {
+            email: player.email,
+            stats: {
+              won: winner ? player.id === winner.userId : false,
+              ratingChange: winner
+                ? player.id === winner.userId
+                  ? 10
+                  : -5
+                : 0, // Example rating change
+              solvedProblems: solvedProblems,
+            },
+          };
+
+          await axios.post(
+            `${process.env.NEXT_APP_URL}/api/user/update-stats`,
+            payload,
+            {
+              headers: {
+                "Content-Type": "application/json",
+                "x-internal-api-key": process.env.INTERNAL_API_SECRET,
+              },
+            }
+          );
+          console.log(`Successfully updated stats for ${player.email}`);
+        }
+      } catch (apiError) {
+        console.error(
+          "Failed to update user stats via API:",
+          apiError.response ? apiError.response.data : apiError.message
+        );
+        // This error is logged on the server but not sent to the client, as the game has already ended for them.
+      }
+      // --- END OF NEW LOGIC ---
     } catch (error) {
       console.error("Error in end-challenge:", error);
       socket.emit("error", { message: error.message });
     }
   });
-
   // Get user submissions
   socket.on("get-user-submissions", (data) => {
     try {
