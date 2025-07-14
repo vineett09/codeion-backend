@@ -14,6 +14,7 @@ class DSAChallengeRoom {
     this.challengeHistory = [];
     this.userSubmissions = new Map();
     this.leaderboard = new Map();
+    this.userCodes = new Map();
     this.status = "waiting";
     this.timeLimit = 30 * 60 * 1000;
     this.startTime = null;
@@ -156,7 +157,12 @@ class DSAChallengeRoom {
       room: this.toJSON(),
       submissions: this.getUserSubmissions(userId),
       leaderboard: this.getLeaderboard(),
+      userCode: this.userCodes.get(userId) || "",
     };
+  }
+
+  saveUserCode(userId, code) {
+    this.userCodes.set(userId, code);
   }
 
   toJSON() {

@@ -148,9 +148,21 @@ class DSAChallengeRoomService {
       - Difficulty: ${difficulty}
       - Topic: ${topic}
       - The response must be a single, minified JSON object.
-      - The JSON object must have these exact keys: "title", "description", "examples" (an array of objects with "input" and "output" strings), "constraints" (an array of strings), "template" (an object with keys "javascript", "python", "cpp"), and "testCases" (an array of exactly 5 objects, each with "input" as a JSON object and "output" as a JSON serializable value).
+      - The JSON object must have these exact keys: "title", "description", "examples" (an array of objects with "input" and "output" strings), "constraints" (an array of strings), "template" (an object with keys "javascript", "python", "cpp", "java", "go"), "testCases" (an array of exactly 5 objects, each with "input" as a JSON object and "output" as a JSON serializable value), and "functionName" (string - the main function name to be called).
       - The 'input' in testCases should be an object where keys are the parameter names.
-      - Example for a twoSum problem test case input: {"nums": [2, 7, 11, 15], "target": 9}
+      - The 'template' should contain starter code for each language with proper function signatures, parameter names, and return types.
+      - The 'functionName' should be the name of the main function that will be called during execution.
+      - For templates, use realistic function signatures like LeetCode:
+        * JavaScript: function functionName(param1, param2) { }
+        * Python: def function_name(param1, param2):
+        * C++: class Solution { public: returnType functionName(param1Type param1, param2Type param2) { } };
+        * Java: class Solution { public returnType functionName(param1Type param1, param2Type param2) { } }
+        * Go: func functionName(param1 param1Type, param2 param2Type) returnType { }
+      - Example for a twoSum problem:
+        * functionName: "twoSum"
+        * testCases input: {"nums": [2, 7, 11, 15], "target": 9}
+        * JavaScript template: "function twoSum(nums, target) {\n    // Your code here\n}"
+        * Python template: "def two_sum(nums, target):\n    # Your code here\n    pass"
 
       Do not include any text, explanation, or markdown formatting outside of the JSON object.
     `;
@@ -225,9 +237,16 @@ class DSAChallengeRoomService {
 
       if (!submission) throw new Error("Submission not found");
 
+      // Get the function name from the current challenge
+      const functionName = room.currentChallenge.functionName;
+      if (!functionName) {
+        throw new Error("Function name not found in challenge");
+      }
+
       const result = await this.evaluateWithJudge0(
         submission,
-        room.currentChallenge.testCases
+        room.currentChallenge.testCases,
+        functionName
       );
       return room.updateSubmissionResult(submissionId, result);
     } catch (error) {
@@ -242,9 +261,9 @@ class DSAChallengeRoomService {
     }
   }
 
-  async evaluateWithJudge0(submission, testCases) {
+  async evaluateWithJudge0(submission, testCases, functionName) {
     try {
-      if (!submission || !testCases) {
+      if (!submission || !testCases || !functionName) {
         throw new Error("Invalid evaluation data");
       }
 
@@ -262,6 +281,7 @@ class DSAChallengeRoomService {
       console.log("Starting Judge0 evaluation for submission:", {
         submissionId: submission.id,
         language: submission.language,
+        functionName: functionName,
         testCases: testCases.length,
       });
 
@@ -278,7 +298,8 @@ class DSAChallengeRoomService {
         const wrappedCode = this.createWrappedCode(
           submission.code,
           submission.language,
-          testCase
+          testCase,
+          functionName
         );
 
         const submissionData = {
@@ -309,14 +330,34 @@ class DSAChallengeRoomService {
           throw new Error("Invalid response from Judge0");
         }
 
+        // Process the actual output
+        let actualOutput = "No output";
+        if (result.stdout) {
+          actualOutput = Buffer.from(result.stdout, "base64")
+            .toString("utf-8")
+            .trim();
+          // Try to parse as JSON to normalize output format
+          try {
+            const parsed = JSON.parse(actualOutput);
+            actualOutput = JSON.stringify(parsed);
+          } catch (e) {
+            // If not JSON, keep as string but clean it
+            actualOutput = actualOutput.replace(/"/g, "");
+          }
+        }
+
+        // Normalize expected output
+        const expectedOutput = JSON.stringify(testCase.output);
+
+        const passed =
+          result.status.id === 3 && actualOutput === expectedOutput;
+
         results.push({
           testCase: i + 1,
-          passed: result.status.id === 3,
+          passed: passed,
           input: testCase.input,
           expected: testCase.output,
-          actual: result.stdout
-            ? Buffer.from(result.stdout, "base64").toString("utf-8").trim()
-            : "No output",
+          actual: actualOutput,
           status: result.status.description,
           error: result.stderr
             ? Buffer.from(result.stderr, "base64").toString("utf-8")
@@ -347,6 +388,7 @@ class DSAChallengeRoomService {
         stack: error.stack,
         submissionId: submission?.id,
         testCases: testCases?.length,
+        functionName: functionName,
       });
 
       return {
@@ -365,8 +407,16 @@ class DSAChallengeRoomService {
   }
 
   // Helper method to create wrapped code for different languages
-  createWrappedCode(userCode, language, testCase) {
+  // Helper method to create wrapped code for different languages
+  createWrappedCode(userCode, language, testCase, functionName) {
     const inputJson = JSON.stringify(testCase.input);
+    const inputParams = Object.keys(testCase.input);
+    const inputValues = Object.values(testCase.input);
+
+    // Create parameter string for function call
+    const paramString = inputValues
+      .map((val) => JSON.stringify(val))
+      .join(", ");
 
     switch (language) {
       case "javascript":
@@ -375,13 +425,15 @@ ${userCode}
 
 // Test execution
 const input = ${inputJson};
-const result = solution(${Object.values(testCase.input)
-          .map((val) => JSON.stringify(val))
-          .join(", ")});
+const result = ${functionName}(${paramString});
 console.log(JSON.stringify(result));
 `;
 
       case "python":
+        // Convert camelCase to snake_case for Python
+        const pythonFunctionName = functionName
+          .replace(/([A-Z])/g, "_$1")
+          .toLowerCase();
         return `
 import json
 
@@ -389,9 +441,7 @@ ${userCode}
 
 # Test execution
 input_data = ${inputJson}
-result = solution(${Object.values(testCase.input)
-          .map((val) => JSON.stringify(val))
-          .join(", ")})
+result = ${pythonFunctionName}(${paramString})
 print(json.dumps(result))
 `;
 
@@ -400,35 +450,60 @@ print(json.dumps(result))
 #include <iostream>
 #include <string>
 #include <vector>
-#include <nlohmann/json.hpp>
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 using namespace std;
-using json = nlohmann::json;
 
 ${userCode}
 
 int main() {
-    json input = R"(${inputJson})"_json;
-    auto result = solution(${Object.values(testCase.input)
-      .map((val) => JSON.stringify(val))
-      .join(", ")});
-    cout << result << endl;
+    Solution solution;
+    auto result = solution.${functionName}(${paramString});
+    
+    // Handle different return types for output
+    if constexpr (std::is_same_v<decltype(result), std::vector<int>>) {
+        cout << "[";
+        for (size_t i = 0; i < result.size(); ++i) {
+            cout << result[i];
+            if (i < result.size() - 1) cout << ",";
+        }
+        cout << "]" << endl;
+    } else if constexpr (std::is_same_v<decltype(result), int>) {
+        cout << result << endl;
+    } else if constexpr (std::is_same_v<decltype(result), bool>) {
+        cout << (result ? "true" : "false") << endl;
+    } else if constexpr (std::is_same_v<decltype(result), std::string>) {
+        cout << "\\"" << result << "\\"" << endl;
+    } else {
+        cout << result << endl;
+    }
+    
     return 0;
 }
 `;
 
       case "java":
         return `
-import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
 
 ${userCode}
 
 public class Main {
     public static void main(String[] args) {
-        Solution sol = new Solution();
-        Object result = sol.solution(${Object.values(testCase.input)
-          .map((val) => JSON.stringify(val))
-          .join(", ")});
-        System.out.println(result);
+        Solution solution = new Solution();
+        Object result = solution.${functionName}(${paramString});
+        
+        // Handle different return types
+        if (result instanceof List) {
+            System.out.println(result.toString().replace(" ", ""));
+        } else if (result instanceof int[]) {
+            System.out.println(Arrays.toString((int[]) result).replace(" ", ""));
+        } else if (result instanceof String) {
+            System.out.println("\\"" + result + "\\"");
+        } else {
+            System.out.println(result);
+        }
     }
 }
 `;
@@ -445,9 +520,7 @@ import (
 ${userCode}
 
 func main() {
-    result := solution(${Object.values(testCase.input)
-      .map((val) => JSON.stringify(val))
-      .join(", ")})
+    result := ${functionName}(${paramString})
     output, _ := json.Marshal(result)
     fmt.Println(string(output))
 }

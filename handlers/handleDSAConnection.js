@@ -169,6 +169,21 @@ const handleDSAConnection = (io, socket) => {
       socket.emit("error", { message: error.message });
     }
   });
+  socket.on("save-code", (data) => {
+    const { roomId, code } = data;
+    const user = dsaRoomService.getUserBySocketId(socket.id);
+    const room = dsaRoomService.getRoom(roomId);
+    if (!room || !user) return;
+
+    room.saveUserCode(user.id, code);
+
+    // ✅ Send back confirmation
+    socket.emit("code-saved", {
+      userId: user.id,
+      roomId,
+      timestamp: new Date(),
+    });
+  });
 
   // Submit solution
   // Update the submit-solution handler
