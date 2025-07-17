@@ -354,22 +354,47 @@ const handleDSAConnection = (io, socket) => {
 
         for (const player of room.users) {
           if (!player.email) continue;
-          const solvedProblems = room
-            .getUserSubmissions(player.id)
-            .filter((sub) => sub.status === "accepted")
-            .map((sub) => sub.challengeId);
+
+          const userSubmissions = room.getUserSubmissions(player.id);
+          const acceptedSubmissions = userSubmissions.filter(
+            (sub) => sub.status === "accepted"
+          );
+          const solvedProblems = acceptedSubmissions.map(
+            (sub) => sub.challengeId
+          );
+          const totalScore = acceptedSubmissions.reduce(
+            (sum, sub) => sum + (sub.score || 0),
+            0
+          );
+
+          // Calculate rating change based on performance
+          let ratingChange = 0;
+          if (winner && player.id === winner.userId) {
+            ratingChange = 25; // Winner gets +25
+          } else if (acceptedSubmissions.length > 0) {
+            ratingChange = 10; // Solved at least one problem +10
+          } else {
+            ratingChange = -5; // No solutions -5
+          }
+
+          // Determine problem difficulties (you'll need to add difficulty to your challenge generation)
+          const problemDifficulties = solvedProblems.map(
+            () => room.difficulty || "medium"
+          );
+
           const payload = {
             email: player.email,
             stats: {
               won: winner ? player.id === winner.userId : false,
-              ratingChange: winner
-                ? player.id === winner.userId
-                  ? 10
-                  : -5
-                : 0,
+              ratingChange: ratingChange,
               solvedProblems: solvedProblems,
+              problemDifficulties: problemDifficulties,
+              submissions: userSubmissions.length,
+              acceptedSubmissions: acceptedSubmissions.length,
+              score: totalScore,
             },
           };
+
           await axios.post(
             `${process.env.NEXT_APP_URL}/api/user/update-stats`,
             payload,
