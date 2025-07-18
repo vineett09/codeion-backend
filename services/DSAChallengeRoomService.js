@@ -133,13 +133,17 @@ class DSAChallengeRoomService {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
 
-    console.log(
-      `Generating challenge with difficulty: ${difficulty}, topic: ${topic}`
-    );
-    const challenge = await this.callGeminiAPI(difficulty, topic);
+    console.log(`Generating challenge: ${difficulty} / ${topic}`);
 
-    room.setCurrentChallenge(challenge);
-    return challenge;
+    try {
+      const challenge = await this.callGeminiAPI(difficulty, topic);
+      room.setCurrentChallenge(challenge);
+      return challenge;
+    } catch (err) {
+      // 🔒 swallow the error, keep room alive
+      console.error("Gemini generation failed:", err.message);
+      throw new Error("Failed to generate challenge. Please try again later.");
+    }
   }
 
   async callGeminiAPI(difficulty, topic) {

@@ -350,7 +350,25 @@ const handleDSAConnection = (io, socket) => {
       console.log(`Challenge ended in room ${roomId}. Updating user stats...`);
 
       try {
-        const winner = finalLeaderboard.length > 0 ? finalLeaderboard[0] : null;
+        // Determine if anyone actually solved the challenge
+        const allSubmissions = [];
+        room.users.forEach((u) => {
+          const subs = room.getUserSubmissions(u.id);
+          const solved = subs.find((s) => s.status === "accepted");
+          if (solved) {
+            allSubmissions.push({
+              userId: u.id,
+              userName: u.name,
+              score: solved.score,
+            });
+          }
+        });
+
+        let winner = null;
+        if (allSubmissions.length > 0) {
+          allSubmissions.sort((a, b) => b.score - a.score);
+          winner = allSubmissions[0]; // Real winner
+        }
 
         for (const player of room.users) {
           if (!player.email) continue;
@@ -367,17 +385,20 @@ const handleDSAConnection = (io, socket) => {
             0
           );
 
-          // Calculate rating change based on performance
           let ratingChange = 0;
-          if (winner && player.id === winner.userId) {
-            ratingChange = 25; // Winner gets +25
-          } else if (acceptedSubmissions.length > 0) {
-            ratingChange = 10; // Solved at least one problem +10
-          } else {
-            ratingChange = -5; // No solutions -5
+          let won = false;
+
+          if (winner) {
+            won = player.id === winner.userId;
+            if (won) {
+              ratingChange = 25;
+            } else if (acceptedSubmissions.length > 0) {
+              ratingChange = 10;
+            } else {
+              ratingChange = -5;
+            }
           }
 
-          // Determine problem difficulties (you'll need to add difficulty to your challenge generation)
           const problemDifficulties = solvedProblems.map(
             () => room.difficulty || "medium"
           );
@@ -385,10 +406,10 @@ const handleDSAConnection = (io, socket) => {
           const payload = {
             email: player.email,
             stats: {
-              won: winner ? player.id === winner.userId : false,
-              ratingChange: ratingChange,
-              solvedProblems: solvedProblems,
-              problemDifficulties: problemDifficulties,
+              won,
+              ratingChange,
+              solvedProblems,
+              problemDifficulties,
               submissions: userSubmissions.length,
               acceptedSubmissions: acceptedSubmissions.length,
               score: totalScore,
