@@ -558,6 +558,16 @@ func main() {
     return room.getUserSubmissions(userId);
   }
 
+  hasAlreadySolved(roomId, userId, challengeId) {
+    const room = this.getRoom(roomId);
+    if (!room) return false;
+
+    const submissions = room.getUserSubmissions(userId);
+    return submissions.some(
+      (s) => s.status === "accepted" && s.challengeId === challengeId
+    );
+  }
+
   startCleanupTask() {
     setInterval(() => {
       const now = new Date();

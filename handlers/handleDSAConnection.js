@@ -204,6 +204,28 @@ const handleDSAConnection = (io, socket) => {
         throw new Error("Invalid submission data");
       }
 
+      const room = dsaRoomService.getRoom(roomId);
+      if (!room) throw new Error("Room not found");
+      if (!room.currentChallenge?.id) throw new Error("No challenge is active");
+
+      const challengeId = room.currentChallenge.id;
+
+      // ✅ Block duplicate accepted submissions
+      const alreadySolved = dsaRoomService.hasAlreadySolved(
+        roomId,
+        user.id,
+        challengeId
+      );
+
+      if (alreadySolved) {
+        socket.emit("error", {
+          message:
+            "✅ You have already solved this challenge. No need to submit again.",
+          code: "ALREADY_SOLVED",
+        });
+        return;
+      }
+
       const result = await dsaRoomService.submitSolution(
         roomId,
         user.id,
@@ -309,7 +331,6 @@ const handleDSAConnection = (io, socket) => {
 
       const { roomId } = data;
       const room = dsaRoomService.getRoom(roomId);
-
       if (!room) {
         socket.emit("error", { message: "Room not found" });
         return;
@@ -325,51 +346,59 @@ const handleDSAConnection = (io, socket) => {
       const updatedRoom = dsaRoomService.endChallenge(roomId);
       const finalLeaderboard = dsaRoomService.getLeaderboard(roomId);
 
-      io.to(roomId).emit("challenge-ended", {
-        room: updatedRoom.toJSON(),
-        finalLeaderboard,
-        endedBy: user.name,
-      });
-
-      // NOTIFICATION
+      // NOTIFICATION for challenge ending
       sendNotification(
         roomId,
         "warning",
         `The challenge has been ended by ${user.name}.`
       );
 
-      const winner = finalLeaderboard.length > 0 ? finalLeaderboard[0] : null;
-      if (winner) {
+      // Determine the ACTUAL winner (who solved the challenge)
+      const allSubmissions = [];
+      room.users.forEach((u) => {
+        const subs = room.getUserSubmissions(u.id);
+        const solved = subs.find((s) => s.status === "accepted");
+        if (solved) {
+          allSubmissions.push({
+            userId: u.id,
+            userName: u.name,
+            score: solved.score,
+          });
+        }
+      });
+
+      let actualWinner = null;
+      if (allSubmissions.length > 0) {
+        allSubmissions.sort((a, b) => b.score - a.score);
+        actualWinner = allSubmissions[0];
+      }
+
+      // ONLY show winner notification if someone actually solved the challenge
+      if (actualWinner) {
         sendNotification(
           roomId,
           "success",
-          `🏆 ${winner.userName} wins the challenge!`
+          `🏆 ${actualWinner.userName} wins the challenge!`
+        );
+      } else {
+        // Optional: Show a different message when no one wins
+        sendNotification(
+          roomId,
+          "info",
+          `Challenge ended with no winners. Better luck next time!`
         );
       }
+
+      io.to(roomId).emit("challenge-ended", {
+        room: updatedRoom.toJSON(),
+        finalLeaderboard,
+        endedBy: user.name,
+      });
 
       console.log(`Challenge ended in room ${roomId}. Updating user stats...`);
 
       try {
-        // Determine if anyone actually solved the challenge
-        const allSubmissions = [];
-        room.users.forEach((u) => {
-          const subs = room.getUserSubmissions(u.id);
-          const solved = subs.find((s) => s.status === "accepted");
-          if (solved) {
-            allSubmissions.push({
-              userId: u.id,
-              userName: u.name,
-              score: solved.score,
-            });
-          }
-        });
-
-        let winner = null;
-        if (allSubmissions.length > 0) {
-          allSubmissions.sort((a, b) => b.score - a.score);
-          winner = allSubmissions[0]; // Real winner
-        }
-
+        // Stats update logic (keep the existing logic as it's correct)
         for (const player of room.users) {
           if (!player.email) continue;
 
@@ -388,8 +417,8 @@ const handleDSAConnection = (io, socket) => {
           let ratingChange = 0;
           let won = false;
 
-          if (winner) {
-            won = player.id === winner.userId;
+          if (actualWinner) {
+            won = player.id === actualWinner.userId;
             if (won) {
               ratingChange = 25;
             } else if (acceptedSubmissions.length > 0) {
@@ -426,6 +455,7 @@ const handleDSAConnection = (io, socket) => {
               },
             }
           );
+
           console.log(`Successfully updated stats for ${player.email}`);
         }
       } catch (apiError) {
