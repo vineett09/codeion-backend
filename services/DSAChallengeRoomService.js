@@ -138,11 +138,15 @@ class DSAChallengeRoomService {
     try {
       const challenge = await this.callGeminiAPI(difficulty, topic);
       room.setCurrentChallenge(challenge);
-      return challenge;
+      return { success: true, challenge };
     } catch (err) {
-      // 🔒 swallow the error, keep room alive
       console.error("Gemini generation failed:", err.message);
-      throw new Error("Failed to generate challenge. Please try again later.");
+      // Return error instead of throwing
+      return {
+        success: false,
+        error: "Failed to generate challenge. Please try again later.",
+        details: err.message,
+      };
     }
   }
 
