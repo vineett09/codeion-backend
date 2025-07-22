@@ -2,10 +2,11 @@ module.exports = {
   server: {
     port: process.env.PORT || 5000,
     cors: {
-      origin: process.env.CLIENT_URL || "http://localhost:3000",
+      origin: [process.env.CLIENT_URL || "http://localhost:3000"],
       methods: ["GET", "POST"],
     },
   },
+
   gemini: {
     baseURL: `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent`,
   },

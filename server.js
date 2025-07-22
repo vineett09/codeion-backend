@@ -17,7 +17,8 @@ const io = socketIo(server, {
   cors: config.server.cors,
 });
 
-app.use(cors());
+app.use(cors(config.server.cors));
+
 app.use(express.json());
 
 app.use("/api", roomRoutes);
