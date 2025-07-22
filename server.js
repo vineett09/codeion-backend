@@ -18,6 +18,7 @@ const io = socketIo(server, {
 });
 
 app.use(cors(config.server.cors));
+app.options("*", cors(config.server.cors));
 
 app.use(express.json());
 
