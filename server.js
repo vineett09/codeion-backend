@@ -23,8 +23,16 @@ app.use(express.json());
 app.use("/api", roomRoutes);
 app.use("/api/dsa-rooms", dsaRoomRoutes);
 
-app.get("/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date().toISOString() });
+app.get("/api/health", (req, res) => {
+  const healthData = {
+    status: "OK",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+  };
+
+  console.log(`Health check requested at ${healthData.timestamp}`);
+  res.status(200).json(healthData);
 });
 
 // === Setup namespaces ===
