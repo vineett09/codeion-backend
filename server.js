@@ -8,7 +8,7 @@ const logger = require("./utils/logger");
 const dsaRoomRoutes = require("./routes/dsaRooms");
 const handleDSAConnection = require("./handlers/handleDSAConnection");
 const config = require("./config/config");
-const roomRoutes = require("./routes/RoomRoutes");
+const roomRoutes = require("./routes/roomRoutes");
 const handleConnection = require("./handlers/socketHandlers");
 
 const app = express();
