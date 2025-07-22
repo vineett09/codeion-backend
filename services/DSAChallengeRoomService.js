@@ -1,6 +1,7 @@
 const DSAChallengeRoom = require("../models/DSAChallengeRoom");
 const config = require("../config/config");
 const axios = require("axios");
+const logger = require("../utils/logger");
 
 // Mapping our language names to Judge0 language IDs
 const languageToJudgeId = {
@@ -131,15 +132,12 @@ class DSAChallengeRoomService {
   async generateChallenge(roomId, difficulty, topic = "any") {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
-
-    console.log(`Generating challenge: ${difficulty} / ${topic}`);
-
     try {
       const challenge = await this.callGeminiAPI(difficulty, topic);
       room.setCurrentChallenge(challenge);
       return { success: true, challenge };
     } catch (err) {
-      console.error("Gemini generation failed:", err.message);
+      logger.error("Gemini generation failed:", err.message);
       // Return error instead of throwing
       return {
         success: false,
@@ -194,7 +192,7 @@ class DSAChallengeRoomService {
 
       return challengeData;
     } catch (error) {
-      console.error(
+      logger.error(
         "Error calling Gemini API:",
         error.response ? error.response.data : error.message
       );
@@ -217,7 +215,7 @@ class DSAChallengeRoomService {
       try {
         await this.evaluateSubmission(roomId, result.submission.id);
       } catch (error) {
-        console.error("Error evaluating submission:", error);
+        logger.error("Error evaluating submission:", error);
       }
     }
     return result;
@@ -257,7 +255,7 @@ class DSAChallengeRoomService {
       );
       return room.updateSubmissionResult(submissionId, result);
     } catch (error) {
-      console.error("Evaluation error:", error);
+      logger.error("Evaluation error:", error);
       return {
         success: false,
         message: error.message,
@@ -284,13 +282,6 @@ class DSAChallengeRoomService {
           message: `Unsupported language: ${submission.language}`,
         };
       }
-
-      console.log("Starting Judge0 evaluation for submission:", {
-        submissionId: submission.id,
-        language: submission.language,
-        functionName: functionName,
-        testCases: testCases.length,
-      });
 
       const results = [];
       const judge0BaseURL = config.judge0.baseURL;
@@ -390,7 +381,7 @@ class DSAChallengeRoomService {
         totalTests: testCases.length,
       };
     } catch (error) {
-      console.error("Judge0 evaluation failed:", {
+      logger.error("Judge0 evaluation failed:", {
         error: error.message,
         stack: error.stack,
         submissionId: submission?.id,
@@ -590,7 +581,6 @@ func main() {
           now - room.lastActivity > maxInactiveRoomTime
         ) {
           this.rooms.delete(roomId);
-          console.log(`Cleaned up inactive room ${roomId}`);
         } else if (updated) {
           room.lastActivity = new Date();
         }

@@ -1,9 +1,10 @@
 const { v4: uuidv4 } = require("uuid");
 const User = require("../models/User");
 const roomService = require("../services/RoomService");
+const logger = require("../utils/logger");
 
 const handleConnection = (io, socket) => {
-  console.log("User connected:", socket.id);
+  logger.log("User connected:", socket.id);
 
   socket.on("join-room", async (data) => {
     try {
@@ -27,7 +28,7 @@ const handleConnection = (io, socket) => {
         if (reconnectedUser) {
           user = reconnectedUser;
           isReconnecting = true;
-          console.log(`${user.name} reconnected to room ${roomId}`);
+          logger.log(`${user.name} reconnected to room ${roomId}`);
         }
       }
 
@@ -36,7 +37,7 @@ const handleConnection = (io, socket) => {
         const newUserId = uuidv4();
         user = new User(newUserId, userName, socket.id, newSessionId);
         roomService.addUserToRoom(roomId, user);
-        console.log(`${userName} joined room ${roomId} for the first time`);
+        logger.log(`${userName} joined room ${roomId} for the first time`);
       }
 
       socket.join(roomId);
@@ -70,7 +71,7 @@ const handleConnection = (io, socket) => {
         users: currentUsers.map((u) => u.toJSON()),
       });
     } catch (error) {
-      console.error("Error in join-room:", error);
+      logger.error("Error in join-room:", error);
       socket.emit("error", { message: error.message });
     }
   });
@@ -220,7 +221,7 @@ const handleConnection = (io, socket) => {
       userName: user.name,
       users: currentUsers.map((u) => u.toJSON()),
     });
-    console.log(`User ${user.name} explicitly left room ${roomId}`);
+    logger.log(`User ${user.name} explicitly left room ${roomId}`);
   });
 
   socket.on("disconnect", () => {
@@ -233,9 +234,9 @@ const handleConnection = (io, socket) => {
         userName: user.name,
         users: currentUsers.map((u) => u.toJSON()),
       });
-      console.log(`User ${user.name} disconnected from room ${roomId}`);
+      logger.log(`User ${user.name} disconnected from room ${roomId}`);
     }
-    console.log("User disconnected:", socket.id);
+    logger.log("User disconnected:", socket.id);
   });
 };
 

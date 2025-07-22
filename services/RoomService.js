@@ -1,4 +1,5 @@
 const Room = require("../models/Room");
+const logger = require("../utils/logger");
 
 class RoomService {
   constructor() {
@@ -60,7 +61,7 @@ class RoomService {
       }
       user.reconnect(newSocketId);
       this.users.set(newSocketId, { user, roomId });
-      console.log(`User ${user.name} reconnected to room ${roomId}`);
+      logger.log(`User ${user.name} reconnected to room ${roomId}`);
       return user;
     }
     return null;
@@ -75,7 +76,7 @@ class RoomService {
 
     if (room && user) {
       user.markAsDisconnected();
-      console.log(`User ${user.name} marked as disconnected in room ${roomId}`);
+      logger.log(`User ${user.name} marked as disconnected in room ${roomId}`);
       this.users.delete(socketId);
       return { user, roomId, room };
     }
@@ -97,13 +98,13 @@ class RoomService {
     }
 
     room.removeUser(userId);
-    console.log(
+    logger.log(
       `User ${userToRemove.name} permanently removed from room ${roomId}`
     );
 
     if (room.users.length === 0) {
       this.rooms.delete(roomId);
-      console.log(`Room ${roomId} deleted (empty after user left).`);
+      logger.log(`Room ${roomId} deleted (empty after user left).`);
     }
   }
 
@@ -174,7 +175,7 @@ class RoomService {
             user.disconnected &&
             now - user.disconnectedAt > maxDisconnectTime
           ) {
-            console.log(
+            logger.log(
               `Cleaning up disconnected user ${user.name} from room ${roomId}`
             );
             room.users.splice(i, 1);
@@ -186,7 +187,7 @@ class RoomService {
           now - room.lastActivity > maxInactiveRoomTime
         ) {
           this.rooms.delete(roomId);
-          console.log(`Cleaned up inactive empty room: ${roomId}`);
+          logger.log(`Cleaned up inactive empty room: ${roomId}`);
         }
       }
     }, 30 * 1000); // Run cleanup every 30 seconds

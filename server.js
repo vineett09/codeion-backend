@@ -4,7 +4,7 @@ const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
 const cors = require("cors");
-
+const logger = require("./utils/logger");
 const dsaRoomRoutes = require("./routes/dsaRooms");
 const handleDSAConnection = require("./handlers/handleDSAConnection");
 const config = require("./config/config");
@@ -31,7 +31,7 @@ app.get("/api/health", (req, res) => {
     memory: process.memoryUsage(),
   };
 
-  console.log(`Health check requested at ${healthData.timestamp}`);
+  logger.log(`Health check requested at ${healthData.timestamp}`);
   res.status(200).json(healthData);
 });
 
@@ -40,29 +40,29 @@ const mainNamespace = io.of("/main");
 const dsaNamespace = io.of("/dsa");
 
 mainNamespace.on("connection", (socket) => {
-  console.log("New client connected to MAIN namespace:", socket.id);
+  logger.log("New client connected to MAIN namespace:", socket.id);
   handleConnection(mainNamespace, socket);
 
   socket.on("disconnect", (reason) => {
-    console.log("Client disconnected from MAIN:", socket.id, "Reason:", reason);
+    logger.log("Client disconnected from MAIN:", socket.id, "Reason:", reason);
   });
 });
 
 dsaNamespace.on("connection", (socket) => {
-  console.log("New client connected to DSA namespace:", socket.id);
+  logger.log("New client connected to DSA namespace:", socket.id);
   handleDSAConnection(dsaNamespace, socket);
 
   socket.on("disconnect", (reason) => {
-    console.log("Client disconnected from DSA:", socket.id, "Reason:", reason);
+    logger.log("Client disconnected from DSA:", socket.id, "Reason:", reason);
   });
 });
 
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  logger.error(err.stack);
   res.status(500).json({ error: "Something went wrong!" });
 });
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.log(`Server running on port ${PORT}`);
 });

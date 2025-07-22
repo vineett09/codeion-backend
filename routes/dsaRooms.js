@@ -1,6 +1,7 @@
 const express = require("express");
 const { v4: uuidv4 } = require("uuid");
 const dsaRoomService = require("../services/DSAChallengeRoomService");
+const logger = require("../utils/logger");
 
 const router = express.Router();
 
@@ -40,7 +41,7 @@ router.post("/create", async (req, res) => {
       room: room.toJSON(),
     });
   } catch (error) {
-    console.error("Error creating room:", error);
+    logger.error("Error creating room:", error);
     res.status(500).json({
       success: false,
       message: error.message,
