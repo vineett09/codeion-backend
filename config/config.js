@@ -9,14 +9,11 @@ module.exports = {
   gemini: {
     baseURL: `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent`,
   },
-  // Configuration for Judge0 API
   judge0: {
     apiKey: process.env.JUDGE0_API_KEY || "YOUR_JUDGE0_API_KEY",
-    // The host is required in the headers for RapidAPI
     apiHost: "judge0-ce.p.rapidapi.com",
     baseURL: "https://judge0-ce.p.rapidapi.com",
   },
-  // Settings for room and user management
   appSettings: {
     maxUsersPerRoom: 5, // Set max users to 5
     maxDisconnectTime: 10 * 60 * 1000, // 10 minutes

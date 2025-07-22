@@ -2,11 +2,11 @@ class DSAUser {
   constructor(id, name, socketId, sessionId, email) {
     this.id = id;
     this.name = name;
-    this.email = email; // Store the email
+    this.email = email;
     this.socketId = socketId;
     this.sessionId = sessionId;
     this.color = this.generateColor();
-    this.currentLanguage = "javascript"; // Default coding language
+    this.currentLanguage = "javascript";
     this.disconnected = false;
     this.disconnectedAt = null;
     this.stats = {
@@ -16,7 +16,7 @@ class DSAUser {
       averageTime: 0,
       preferredLanguage: "javascript",
     };
-    this.currentSubmission = null; // Track current active submission
+    this.currentSubmission = null;
   }
 
   generateColor() {
@@ -56,7 +56,6 @@ class DSAUser {
       this.stats.acceptedSubmissions++;
       this.stats.totalScore += submission.score;
     }
-    // Update average time calculation could be added here
   }
 
   setCurrentSubmission(submission) {

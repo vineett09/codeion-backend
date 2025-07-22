@@ -59,7 +59,7 @@ class User {
       name: this.name,
       color: this.color,
       activeTab: this.activeTab,
-      disconnected: this.disconnected, // Include disconnected status
+      disconnected: this.disconnected,
     };
   }
 }

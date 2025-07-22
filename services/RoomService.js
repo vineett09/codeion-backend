@@ -3,7 +3,7 @@ const Room = require("../models/Room");
 class RoomService {
   constructor() {
     this.rooms = new Map();
-    this.users = new Map(); // Maps socketId to { user, roomId }
+    this.users = new Map();
     this.startCleanupTask();
   }
 

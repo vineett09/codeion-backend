@@ -1,6 +1,6 @@
 const DSAChallengeRoom = require("../models/DSAChallengeRoom");
 const config = require("../config/config");
-const axios = require("axios"); // Using axios for API requests
+const axios = require("axios");
 
 // Mapping our language names to Judge0 language IDs
 const languageToJudgeId = {
@@ -14,7 +14,7 @@ const languageToJudgeId = {
 class DSAChallengeRoomService {
   constructor() {
     this.rooms = new Map();
-    this.users = new Map(); // Maps socketId to { user, roomId }
+    this.users = new Map();
     this.startCleanupTask();
   }
 
@@ -33,7 +33,6 @@ class DSAChallengeRoomService {
     return room;
   }
 
-  // ... other room and user management methods like getRoom, addUserToRoom, etc. ...
   getRoom(roomId) {
     return this.rooms.get(roomId);
   }
@@ -415,13 +414,11 @@ class DSAChallengeRoomService {
   }
 
   // Helper method to create wrapped code for different languages
-  // Helper method to create wrapped code for different languages
   createWrappedCode(userCode, language, testCase, functionName) {
     const inputJson = JSON.stringify(testCase.input);
     const inputParams = Object.keys(testCase.input);
     const inputValues = Object.values(testCase.input);
 
-    // Create parameter string for function call
     const paramString = inputValues
       .map((val) => JSON.stringify(val))
       .join(", ");
@@ -539,12 +536,10 @@ func main() {
     }
   }
 
-  // ... other methods like endChallenge, getLeaderboard, etc. ...
   endChallenge(roomId) {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
 
-    // Use resetChallenge to properly clear the challenge
     room.resetChallenge();
 
     return room;

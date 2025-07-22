@@ -422,7 +422,6 @@ const handleDSAConnection = (io, socket) => {
       console.log(`Challenge ended in room ${roomId}. Updating user stats...`);
 
       try {
-        // Stats update logic (keep the existing logic as it's correct)
         for (const player of room.users) {
           if (!player.email) continue;
 
@@ -470,7 +469,7 @@ const handleDSAConnection = (io, socket) => {
           };
 
           await axios.post(
-            `${process.env.NEXT_APP_URL}/api/user/update-stats`,
+            `${process.env.CLIENT_URL}/api/user/update-stats`,
             payload,
             {
               headers: {

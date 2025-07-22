@@ -140,7 +140,6 @@ const handleConnection = (io, socket) => {
       });
 
       // If the tab is made private, notify non-owners to remove it
-      // In socketHandlers.js, in the "share-tab" handler, replace this part:
       if (!isPublic) {
         const room = roomService.getRoom(roomId);
         if (room) {
