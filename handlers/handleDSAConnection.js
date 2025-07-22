@@ -470,7 +470,7 @@ const handleDSAConnection = (io, socket) => {
           };
 
           await axios.post(
-            `${process.env.CLIENT_URL}/api/user/update-stats`,
+            `${process.env.FRONTEND_API_URL}/api/user/update-stats`,
             payload,
             {
               headers: {
