@@ -7,7 +7,29 @@ module.exports = {
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     },
   },
-
+  vectorDB: {
+    pinecone: {
+      indexName: process.env.PINECONE_INDEX_NAME,
+      dimension: 768,
+      metric: "cosine",
+      environment: process.env.PINECONE_ENVIRONMENT,
+      minSimilarityByDifficulty: {
+        easy: 0.65,
+        medium: 0.7,
+        hard: 0.75,
+      },
+    },
+    embedding: {
+      model: "gemini-embedding-001",
+      taskType: "SEMANTIC_SIMILARITY",
+      similarityThreshold: 0.7, // Minimum similarity for reuse
+    },
+    cache: {
+      maxChallengesPerTopic: 100, // Limit cached challenges per topic
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days in milliseconds
+      cleanupInterval: 24 * 60 * 60 * 1000, // Daily cleanup
+    },
+  },
   gemini: {
     baseURL: `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent`,
   },

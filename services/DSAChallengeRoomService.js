@@ -2,6 +2,9 @@ const DSAChallengeRoom = require("../models/DSAChallengeRoom");
 const config = require("../config/config");
 const axios = require("axios");
 const logger = require("../utils/logger");
+const vectorDBService = require("./vectorDBService");
+const Challenge = require("../models/Challenge");
+const { v4: uuidv4 } = require("uuid"); // Add this import
 
 // Mapping our language names to Judge0 language IDs
 const languageToJudgeId = {
@@ -128,22 +131,125 @@ class DSAChallengeRoomService {
     const room = this.getRoom(roomId);
     return room ? room.users.filter((user) => !user.disconnected) : [];
   }
+  validateChallenge(challengeData) {
+    const required = [
+      "title",
+      "description",
+      "examples",
+      "constraints",
+      "template",
+      "testCases",
+      "functionName",
+    ];
+    const missing = required.filter((field) => !challengeData[field]);
 
-  async generateChallenge(roomId, difficulty, topic = "any") {
+    if (missing.length > 0) {
+      throw new Error(`Missing required fields: ${missing.join(", ")}`);
+    }
+
+    if (!challengeData.testCases || challengeData.testCases.length < 3) {
+      throw new Error("At least 3 test cases required");
+    }
+
+    if (
+      !challengeData.template ||
+      Object.keys(challengeData.template).length === 0
+    ) {
+      throw new Error("Template for at least one language required");
+    }
+
+    return true;
+  }
+  async generateChallenge(roomId, difficulty, topic = "any", userEmail) {
     const room = this.getRoom(roomId);
     if (!room) throw new Error("Room not found");
+
     try {
-      const challenge = await this.callGeminiAPI(difficulty, topic);
-      room.setCurrentChallenge(challenge);
-      return { success: true, challenge };
+      // First, try to find an unsolved cached challenge
+      const cachedResult = await vectorDBService.getUnsolvedChallenge(
+        userEmail,
+        topic,
+        difficulty
+      );
+
+      if (cachedResult.found) {
+        // Use cached challenge
+        const challenge = cachedResult.challenge;
+        room.setCurrentChallenge(challenge);
+
+        logger.log(
+          `Using cached challenge: ${challenge.challengeId} (similarity: ${cachedResult.similarity}, source: ${cachedResult.source})`
+        );
+
+        return {
+          success: true,
+          challenge: room.currentChallenge,
+          cached: true,
+          similarity: cachedResult.similarity,
+          source: cachedResult.source,
+        };
+      }
+
+      // No suitable cached challenge found, generate new one
+      logger.log("No suitable cached challenge found, generating new one...");
+      const newChallenge = await this.callGeminiAPI(difficulty, topic);
+      this.validateChallenge(newChallenge);
+      newChallenge.challengeId = uuidv4();
+
+      // Store the new challenge in vector DB
+      try {
+        const storeResult = await vectorDBService.storeChallenge(newChallenge);
+        if (
+          !storeResult.success &&
+          storeResult.error !== "Challenge already exists"
+        ) {
+          logger.warn(
+            "Failed to store challenge in vector DB:",
+            storeResult.error
+          );
+        }
+      } catch (storeError) {
+        logger.warn(
+          "Failed to store challenge in vector DB:",
+          storeError.message
+        );
+        // Continue anyway - the challenge can still be used
+      }
+
+      room.setCurrentChallenge(newChallenge);
+
+      return {
+        success: true,
+        challenge: room.currentChallenge,
+        cached: false,
+        source: "generated",
+      };
     } catch (err) {
-      logger.error("Gemini generation failed:", err.message);
-      // Return error instead of throwing
+      logger.error("Challenge generation/retrieval failed:", err.message);
       return {
         success: false,
-        error: "Failed to generate challenge. Please try again later.",
+        error:
+          "Failed to generate or retrieve challenge. Please try again later.",
         details: err.message,
       };
+    }
+  }
+
+  async markChallengeAsSolved(roomId, userId, challengeId) {
+    try {
+      const room = this.getRoom(roomId);
+      if (!room) return { success: false, error: "Room not found" };
+
+      const user = room.users.find((u) => u.id === userId);
+      if (!user || !user.email) {
+        return { success: false, error: "User email not found" };
+      }
+
+      await vectorDBService.markChallengeSolved(challengeId, user.email);
+      return { success: true };
+    } catch (error) {
+      logger.error("Error marking challenge as solved:", error);
+      return { success: false, error: error.message };
     }
   }
 
@@ -283,7 +389,6 @@ class DSAChallengeRoomService {
         };
       }
 
-      const results = [];
       const judge0BaseURL = config.judge0.baseURL;
       const judge0ApiKey = config.judge0.apiKey;
 
@@ -291,8 +396,8 @@ class DSAChallengeRoomService {
         throw new Error("Judge0 configuration is missing");
       }
 
-      for (let i = 0; i < testCases.length; i++) {
-        const testCase = testCases[i];
+      // Prepare batch submissions
+      const batchSubmissions = testCases.map((testCase, index) => {
         const wrappedCode = this.createWrappedCode(
           submission.code,
           submission.language,
@@ -300,7 +405,7 @@ class DSAChallengeRoomService {
           functionName
         );
 
-        const submissionData = {
+        return {
           language_id: languageId,
           source_code: Buffer.from(wrappedCode).toString("base64"),
           stdin: "",
@@ -308,80 +413,128 @@ class DSAChallengeRoomService {
             JSON.stringify(testCase.output)
           ).toString("base64"),
         };
+      });
 
-        const options = {
-          method: "POST",
-          url: `${judge0BaseURL}/submissions`,
-          params: { base64_encoded: "true", wait: "true" },
+      // Submit batch request
+      const batchOptions = {
+        method: "POST",
+        url: `${judge0BaseURL}/submissions/batch`,
+        params: { base64_encoded: "true" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-RapidAPI-Key": judge0ApiKey,
+          "X-RapidAPI-Host": config.judge0.apiHost,
+        },
+        data: {
+          submissions: batchSubmissions,
+        },
+      };
+
+      const batchResponse = await axios.request(batchOptions);
+      const tokens = batchResponse.data.map((submission) => submission.token);
+
+      // Poll for results with exponential backoff
+      let attempts = 0;
+      const maxAttempts = 10;
+      let delay = 1000; // Start with 1 second
+
+      while (attempts < maxAttempts) {
+        const resultsOptions = {
+          method: "GET",
+          url: `${judge0BaseURL}/submissions/batch`,
+          params: {
+            tokens: tokens.join(","),
+            base64_encoded: "true",
+          },
           headers: {
-            "Content-Type": "application/json",
             "X-RapidAPI-Key": judge0ApiKey,
             "X-RapidAPI-Host": config.judge0.apiHost,
           },
-          data: submissionData,
         };
 
-        const response = await axios.request(options);
-        const result = response.data;
+        const resultsResponse = await axios.request(resultsOptions);
+        const results = resultsResponse.data.submissions;
 
-        if (!result.status) {
-          throw new Error("Invalid response from Judge0");
+        // Check if all submissions are completed
+        const allCompleted = results.every(
+          (result) => result.status && result.status.id >= 3 // 3 = Accepted, 4+ = Various error states
+        );
+
+        if (allCompleted) {
+          // Process results
+          const processedResults = results.map((result, index) => {
+            const testCase = testCases[index];
+
+            if (!result.status) {
+              throw new Error("Invalid response from Judge0");
+            }
+
+            // Process the actual output
+            let actualOutput = "No output";
+            if (result.stdout) {
+              actualOutput = Buffer.from(result.stdout, "base64")
+                .toString("utf-8")
+                .trim();
+              // Try to parse as JSON to normalize output format
+              try {
+                const parsed = JSON.parse(actualOutput);
+                actualOutput = JSON.stringify(parsed);
+              } catch (e) {
+                // If not JSON, keep as string but clean it
+                actualOutput = actualOutput.replace(/"/g, "");
+              }
+            }
+
+            // Normalize expected output
+            const expectedOutput = JSON.stringify(testCase.output);
+
+            const passed =
+              result.status.id === 3 && actualOutput === expectedOutput;
+
+            return {
+              testCase: index + 1,
+              passed: passed,
+              input: testCase.input,
+              expected: testCase.output,
+              actual: actualOutput,
+              status: result.status.description,
+              error: result.stderr
+                ? Buffer.from(result.stderr, "base64").toString("utf-8")
+                : null,
+              compilationError: result.compile_output
+                ? Buffer.from(result.compile_output, "base64").toString("utf-8")
+                : null,
+            };
+          });
+
+          const passedTests = processedResults.filter((r) => r.passed).length;
+          const allPassed = passedTests === testCases.length;
+          const score = allPassed
+            ? 100
+            : Math.round((passedTests / testCases.length) * 50);
+
+          return {
+            success: true,
+            status: allPassed ? "accepted" : "rejected",
+            testResults: processedResults,
+            score,
+            passedTests,
+            totalTests: testCases.length,
+          };
         }
 
-        // Process the actual output
-        let actualOutput = "No output";
-        if (result.stdout) {
-          actualOutput = Buffer.from(result.stdout, "base64")
-            .toString("utf-8")
-            .trim();
-          // Try to parse as JSON to normalize output format
-          try {
-            const parsed = JSON.parse(actualOutput);
-            actualOutput = JSON.stringify(parsed);
-          } catch (e) {
-            // If not JSON, keep as string but clean it
-            actualOutput = actualOutput.replace(/"/g, "");
-          }
-        }
-
-        // Normalize expected output
-        const expectedOutput = JSON.stringify(testCase.output);
-
-        const passed =
-          result.status.id === 3 && actualOutput === expectedOutput;
-
-        results.push({
-          testCase: i + 1,
-          passed: passed,
-          input: testCase.input,
-          expected: testCase.output,
-          actual: actualOutput,
-          status: result.status.description,
-          error: result.stderr
-            ? Buffer.from(result.stderr, "base64").toString("utf-8")
-            : null,
-          compilationError: result.compile_output
-            ? Buffer.from(result.compile_output, "base64").toString("utf-8")
-            : null,
-        });
+        // Wait before next poll with exponential backoff
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay = Math.min(delay * 1.5, 5000); // Cap at 5 seconds
+        attempts++;
       }
 
-      const passedTests = results.filter((r) => r.passed).length;
-      const allPassed = passedTests === testCases.length;
-      const score = allPassed
-        ? 100
-        : Math.round((passedTests / testCases.length) * 50);
-
-      return {
-        success: true,
-        status: allPassed ? "accepted" : "rejected",
-        testResults: results,
-        score,
-        passedTests,
-        totalTests: testCases.length,
-      };
+      // If we reach here, polling timed out
+      throw new Error(
+        "Evaluation timed out - submissions took too long to complete"
+      );
     } catch (error) {
-      logger.error("Judge0 evaluation failed:", {
+      logger.error("Judge0 batch evaluation failed:", {
         error: error.message,
         stack: error.stack,
         submissionId: submission?.id,

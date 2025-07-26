@@ -10,6 +10,7 @@ const handleDSAConnection = require("./handlers/handleDSAConnection");
 const config = require("./config/config");
 const roomRoutes = require("./routes/roomRoutes");
 const handleConnection = require("./handlers/socketHandlers");
+const connectToDatabase = require("./lib/mongoose"); // ✅ NEW
 
 const app = express();
 const server = http.createServer(app);
@@ -17,9 +18,11 @@ const io = socketIo(server, {
   cors: config.server.cors,
 });
 
+// Connect MongoDB before server starts
+connectToDatabase(); // ✅ MONGO CONNECT
+
 app.use(cors(config.server.cors));
 app.options("*", cors(config.server.cors));
-
 app.use(express.json());
 
 app.use("/api", roomRoutes);
